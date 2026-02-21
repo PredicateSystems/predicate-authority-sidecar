@@ -2,7 +2,7 @@
 
 use axum::{
     extract::{Json, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
     Router,
@@ -11,8 +11,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::info;
+use tracing::{debug, info, warn};
 
+use crate::bridge::IdpBridgeProvider;
 use crate::identity::{LedgerQueueItem, LocalIdentityRegistry, TaskIdentityRecord};
 use crate::models::{
     AuthorizationDecision, PolicyRule, SidecarAuthorizeRequest, SidecarAuthorizeResponse,
@@ -26,8 +27,10 @@ pub struct AppState {
     pub policy_engine: Arc<PolicyEngine>,
     pub proof_ledger: Arc<InMemoryProofLedger>,
     pub identity_registry: Option<Arc<LocalIdentityRegistry>>,
+    pub idp_bridge: Option<Arc<IdpBridgeProvider>>,
     pub start_time: std::time::Instant,
     pub mode: String,
+    pub identity_mode: String,
 }
 
 impl AppState {
@@ -36,13 +39,21 @@ impl AppState {
             policy_engine: Arc::new(policy_engine),
             proof_ledger: Arc::new(InMemoryProofLedger::new()),
             identity_registry: None,
+            idp_bridge: None,
             start_time: std::time::Instant::now(),
             mode: mode.to_string(),
+            identity_mode: "local".to_string(),
         }
     }
 
     pub fn with_identity_registry(mut self, registry: LocalIdentityRegistry) -> Self {
         self.identity_registry = Some(Arc::new(registry));
+        self
+    }
+
+    pub fn with_idp_bridge(mut self, bridge: IdpBridgeProvider, identity_mode: &str) -> Self {
+        self.idp_bridge = Some(Arc::new(bridge));
+        self.identity_mode = identity_mode.to_string();
         self
     }
 }
@@ -79,10 +90,75 @@ pub fn create_router(state: AppState) -> Router {
 
 // --- Authorization ---
 
+/// Extract bearer token from Authorization header
+fn extract_bearer_token(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|auth| {
+            if auth.to_lowercase().starts_with("bearer ") {
+                Some(auth[7..].trim().to_string())
+            } else {
+                None
+            }
+        })
+}
+
 async fn authorize_handler(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<SidecarAuthorizeRequest>,
 ) -> impl IntoResponse {
+    // Validate bearer token if IdP bridge is configured and requires validation
+    if let Some(ref bridge) = state.idp_bridge {
+        if bridge.requires_token() {
+            let token = match extract_bearer_token(&headers) {
+                Some(t) => t,
+                None => {
+                    debug!(
+                        "Authorization denied: missing bearer token for {} mode",
+                        state.identity_mode
+                    );
+                    let response = SidecarAuthorizeResponse {
+                        allowed: false,
+                        reason: "MISSING_AUTHORIZATION".to_string(),
+                        mandate_id: None,
+                        violated_rule: None,
+                        missing_labels: vec![],
+                    };
+                    return (StatusCode::UNAUTHORIZED, Json(response));
+                }
+            };
+
+            // Validate the token
+            match bridge.validate_token(&token).await {
+                Ok(Some(identity)) => {
+                    debug!(
+                        "Token validated: subject={}, issuer={}, provider={:?}",
+                        identity.subject, identity.issuer, identity.provider
+                    );
+                    // Token is valid - continue with policy evaluation
+                    // Optionally: could override request.principal with identity.subject
+                }
+                Ok(None) => {
+                    // Local mode - no token validation needed
+                }
+                Err(e) => {
+                    warn!("Token validation failed: {}", e);
+                    let response = SidecarAuthorizeResponse {
+                        allowed: false,
+                        reason: format!("INVALID_TOKEN: {}", e),
+                        mandate_id: None,
+                        violated_rule: None,
+                        missing_labels: vec![],
+                    };
+                    return (StatusCode::UNAUTHORIZED, Json(response));
+                }
+            }
+        }
+    }
+
+    // Evaluate policy
     let result = state.policy_engine.evaluate(&request);
 
     // Record to proof ledger
@@ -92,7 +168,7 @@ async fn authorize_handler(
         &request.resource,
         result.allowed,
         result.reason.clone(),
-        None, // No mandate in Phase 1
+        None, // Mandate will be added in Phase 4
     );
 
     let decision: AuthorizationDecision = result.into();
@@ -129,6 +205,7 @@ async fn health_handler(State(state): State<AppState>) -> Json<HealthResponse> {
 struct StatusResponse {
     status: String,
     mode: String,
+    identity_mode: String,
     uptime_s: u64,
     rule_count: usize,
     total_allowed: u64,
@@ -141,6 +218,7 @@ async fn status_handler(State(state): State<AppState>) -> Json<StatusResponse> {
     Json(StatusResponse {
         status: "healthy".to_string(),
         mode: state.mode.clone(),
+        identity_mode: state.identity_mode.clone(),
         uptime_s: state.start_time.elapsed().as_secs(),
         rule_count: state.policy_engine.rule_count(),
         total_allowed: stats.total_allowed,

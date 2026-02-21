@@ -2,7 +2,6 @@
 //!
 //! Supports ES256 (ECDSA P-256) and HS256 (HMAC-SHA256) algorithms.
 //!
-//! Note: Some types/methods are defined for future HTTP endpoint integration (Phase 5).
 
 #![allow(dead_code)]
 

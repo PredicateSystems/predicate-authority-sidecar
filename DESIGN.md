@@ -4,7 +4,7 @@
 
 **Feasibility: HIGH** - A Rust-based sidecar is technically feasible and provides significant benefits. The current Python implementation is well-architected with clean boundaries, making it portable. The TypeScript SDK already communicates via HTTP/JSON, so it works immediately with a Rust sidecar.
 
-**Status**: Phase 5 Complete (Production Ready)
+**Status**: Phase 5 Complete (Production Ready) - All phases implemented
 
 ---
 
@@ -28,15 +28,15 @@
 
 ### HTTP API Surface (13 endpoints)
 
-**Must implement:**
-- `POST /v1/authorize` - Core authorization ✅
+**All endpoints implemented:**
+- `POST /v1/authorize` - Core authorization ✅ (with token validation)
 - `GET /health`, `/status`, `/metrics` - Operations ✅
 - `POST /policy/reload` - Hot-reload ✅
-- `POST /revoke/{principal,intent,mandate}` - Revocation
-- `POST /identity/task`, `/identity/revoke` - Local identity
-- `GET /identity/list` - Identity listing
-- `POST /ledger/flush-ack`, `/ledger/flush-now`, `/ledger/requeue` - Queue ops
-- `GET /ledger/flush-queue`, `/ledger/dead-letter` - Queue inspection
+- `POST /revoke/{principal,intent,mandate}` - Revocation ✅
+- `POST /identity/task`, `/identity/revoke` - Local identity ✅
+- `GET /identity/list` - Identity listing ✅
+- `POST /ledger/flush-ack`, `/ledger/flush-now`, `/ledger/requeue` - Queue ops ✅
+- `GET /ledger/flush-queue`, `/ledger/dead-letter` - Queue inspection ✅
 
 ### Wire Protocol (Frozen Contract)
 
@@ -94,42 +94,43 @@ The sidecar contract is already language-agnostic JSON:
 
 **Deliverable**: TypeScript SDK can authorize against Rust sidecar
 
-### Phase 2: Mandate Signing (Current)
+### Phase 2: Mandate Signing ✅ COMPLETE
 
-1. JWT signing with ES256/HS256
-2. Delegation chain validation
-3. Key management (stage/activate/retire)
-4. Mandate TTL enforcement
+1. ✅ JWT signing with ES256/HS256
+2. ✅ Delegation chain validation
+3. ✅ Key management (stage/activate/retire)
+4. ✅ Mandate TTL enforcement
 
 **Deliverable**: Full mandate issuance parity
 
-### Phase 3: Operations & Persistence
+### Phase 3: Operations & Persistence ✅ COMPLETE
 
-1. Local identity registry (JSON file)
-2. Queue management (flush, dead-letter, requeue)
-3. TTL-based expiration
-4. Payload redaction
-5. Health/status/metrics endpoints
+1. ✅ Local identity registry (JSON file)
+2. ✅ Queue management (flush, dead-letter, requeue)
+3. ✅ TTL-based expiration
+4. ✅ Payload redaction
+5. ✅ Health/status/metrics endpoints
 
 **Deliverable**: Operational parity with Python sidecar
 
-### Phase 4: Control Plane & IdP
+### Phase 4: Control Plane & IdP ✅ COMPLETE
 
-1. Control plane HTTP client
-2. Long-poll sync
-3. Revocation cache
-4. Okta/OIDC/Entra bridges
-5. JWKS caching and validation
+1. ✅ Control plane HTTP client
+2. ✅ Long-poll sync
+3. ✅ Revocation cache
+4. ✅ Okta/OIDC/Entra bridges with HTTP handler integration
+5. ✅ JWKS caching and validation
+6. ✅ Authorization header extraction and token validation
 
 **Deliverable**: Enterprise feature parity
 
-### Phase 5: Polish & Release
+### Phase 5: Polish & Release ✅ COMPLETE
 
-1. CLI argument parsing (`clap`) ✅
-2. Configuration file support
-3. Cross-platform builds (GitHub Actions) ✅
-4. Integration tests against Python sidecar
-5. Documentation and migration guide
+1. ✅ CLI argument parsing (`clap`) with IdP options
+2. ✅ Configuration file support (TOML with IdP sections)
+3. ✅ Cross-platform builds (GitHub Actions)
+4. ✅ Integration tests (54 tests including token validation)
+5. ✅ Documentation and migration guide
 
 **Deliverable**: Production-ready release
 

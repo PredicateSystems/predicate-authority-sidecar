@@ -15,7 +15,6 @@
 //!
 //! For durable, queryable audit storage, use the control-plane audit vault.
 //!
-//! Note: Some methods are defined for future HTTP endpoint integration (Phase 5).
 
 #![allow(dead_code)]
 
