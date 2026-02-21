@@ -1,6 +1,10 @@
 //! JWT mandate signing and verification.
 //!
 //! Supports ES256 (ECDSA P-256) and HS256 (HMAC-SHA256) algorithms.
+//!
+//! Note: Some types/methods are defined for future HTTP endpoint integration (Phase 5).
+
+#![allow(dead_code)]
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use hmac::{Hmac, Mac};
@@ -54,7 +58,7 @@ impl SigningKeyMaterial {
             Ok(key) => key,
             Err(_) => {
                 // Fallback: hash again if the first attempt fails (extremely unlikely)
-                let fallback_digest = Sha256::digest(&digest);
+                let fallback_digest = Sha256::digest(digest);
                 let fallback_bytes: [u8; 32] = fallback_digest.into();
                 SigningKey::from_bytes(GenericArray::from_slice(&fallback_bytes))
                     .expect("fallback scalar should be valid")
@@ -492,9 +496,6 @@ impl LocalMandateSigner {
         }
 
         // Validate delegation consistency
-        if claims.delegation_depth < 0 {
-            return false;
-        }
         if claims.delegation_depth == 0 && claims.delegated_by.is_some() {
             return false;
         }

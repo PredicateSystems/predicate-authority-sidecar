@@ -1,6 +1,10 @@
 //! In-memory proof ledger for audit logging.
 //!
 //! Records all authorization decisions for later audit and governance.
+//!
+//! Note: Some methods are defined for future HTTP endpoint integration (Phase 5).
+
+#![allow(dead_code)]
 
 use parking_lot::RwLock;
 use std::collections::HashMap;

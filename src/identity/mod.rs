@@ -14,6 +14,10 @@
 //! - **File permissions**: 0o600 for files, 0o700 for directories (Unix)
 //!
 //! For durable, queryable audit storage, use the control-plane audit vault.
+//!
+//! Note: Some methods are defined for future HTTP endpoint integration (Phase 5).
+
+#![allow(dead_code)]
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -199,8 +203,7 @@ impl LocalIdentityRegistry {
             .values()
             .filter(|r| {
                 let is_expired = now >= r.expires_at_epoch_s;
-                let include = (include_revoked || !r.revoked) && (include_expired || !is_expired);
-                include
+                (include_revoked || !r.revoked) && (include_expired || !is_expired)
             })
             .cloned()
             .collect()
@@ -362,9 +365,7 @@ impl LocalIdentityRegistry {
             .flush_queue
             .values()
             .filter(|item| {
-                let include = (!item.flushed || include_flushed)
-                    && (!item.quarantined || include_quarantined);
-                include
+                (!item.flushed || include_flushed) && (!item.quarantined || include_quarantined)
             })
             .cloned()
             .collect();
@@ -379,10 +380,7 @@ impl LocalIdentityRegistry {
 
         // Redact payloads if requested
         if redact_payloads {
-            items = items
-                .into_iter()
-                .map(|i| Self::redact_queue_item(i))
-                .collect();
+            items = items.into_iter().map(Self::redact_queue_item).collect();
         }
 
         items
@@ -412,10 +410,7 @@ impl LocalIdentityRegistry {
 
         // Redact payloads if requested
         if redact_payloads {
-            items = items
-                .into_iter()
-                .map(|i| Self::redact_queue_item(i))
-                .collect();
+            items = items.into_iter().map(Self::redact_queue_item).collect();
         }
 
         items
@@ -828,6 +823,6 @@ mod tests {
             "authorization_allowed"
         );
         assert_eq!(payload["emitted_at_epoch_s"].as_i64().unwrap(), 1700000000);
-        assert_eq!(payload["allowed"].as_bool().unwrap(), true);
+        assert!(payload["allowed"].as_bool().unwrap());
     }
 }
