@@ -27,7 +27,7 @@ pub struct ControlPlaneConfig {
     pub base_url: String,
     pub tenant_id: String,
     pub project_id: String,
-    pub auth_token: Option<String>,
+    pub api_key: Option<String>,
     pub timeout_s: f64,
     pub max_retries: u32,
     pub backoff_initial_s: f64,
@@ -46,7 +46,7 @@ impl Default for ControlPlaneConfig {
             base_url: "https://api.predicate.systems".to_string(),
             tenant_id: String::new(),
             project_id: String::new(),
-            auth_token: None,
+            api_key: None,
             timeout_s: 2.0,
             max_retries: 2,
             backoff_initial_s: 0.2,
@@ -337,7 +337,7 @@ impl ControlPlaneClient {
         while attempts > 0 {
             let mut request = self.client.post(&url).json(payload);
 
-            if let Some(ref token) = self.config.auth_token {
+            if let Some(ref token) = self.config.api_key {
                 request = request.header("Authorization", format!("Bearer {}", token));
             }
 
@@ -383,7 +383,7 @@ impl ControlPlaneClient {
         while attempts > 0 {
             let mut request = self.client.get(&url).timeout(timeout);
 
-            if let Some(ref token) = self.config.auth_token {
+            if let Some(ref token) = self.config.api_key {
                 request = request.header("Authorization", format!("Bearer {}", token));
             }
 

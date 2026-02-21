@@ -108,8 +108,8 @@ pub struct ControlPlaneFileConfig {
     /// Project ID
     pub project_id: Option<String>,
 
-    /// Auth token (prefer env var for secrets)
-    pub auth_token: Option<String>,
+    /// API key (prefer env var PREDICATE_API_KEY for secrets)
+    pub api_key: Option<String>,
 
     /// Enable sync
     pub sync_enabled: bool,
@@ -220,7 +220,7 @@ queue_item_ttl_s = 86400 # 24 hours
 # url = "https://api.predicatesystems.dev"
 # tenant_id = "your-tenant-id"
 # project_id = "your-project-id"
-# auth_token = "prefer-env-var-PREDICATE_AUTH_TOKEN"
+# api_key = "prefer-env-var-PREDICATE_API_KEY"
 sync_enabled = false
 sync_wait_timeout_s = 15.0
 # sync_environment = "production"
