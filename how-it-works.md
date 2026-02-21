@@ -380,6 +380,197 @@ The sidecar is a **stateless validator** that:
 
 ---
 
+## Local IDP Mode: Sidecar as Token Issuer
+
+In **local-idp mode**, the sidecar works differently - it acts as both token issuer AND validator. This is useful for development, air-gapped environments, and ephemeral task isolation.
+
+### Local IDP Architecture
+
+```
+┌─────────────┐                    ┌──────────────────┐     ┌─────────┐
+│  AI Agent   │───────────────────▶│ predicate-authorityd │────▶│ Backend │
+│             │                    │    (Sidecar)     │     │   API   │
+└─────────────┘                    └──────────────────┘     └─────────┘
+      │                                    │                    │
+      │ 1. POST /identity/task             │                    │
+      │    {principal_id, task_id, ttl}    │                    │
+      │───────────────────────────────────▶│                    │
+      │◀───────────────────────────────────│                    │
+      │  {token: "eyJ...", expires_at}     │                    │
+      │                                    │                    │
+      │ 2. POST /v1/authorize              │                    │
+      │    Authorization: Bearer <token>   │                    │
+      │───────────────────────────────────▶│                    │
+      │                   Validate token   │                    │
+      │                   (self-signed)    │                    │
+      │◀───────────────────────────────────│                    │
+      │  {allowed: true, mandate_id}       │                    │
+      │                                    │                    │
+```
+
+### Key Differences: External IdP vs Local IDP
+
+| Aspect | Okta/OIDC/Entra Mode | Local IDP Mode |
+|--------|----------------------|----------------|
+| **Token issuer** | External IdP (Okta, etc.) | Sidecar itself |
+| **Token endpoint** | IdP's `/v1/token` | Sidecar's `/identity/task` |
+| **Signing keys** | IdP's keys (fetched via JWKS) | Local signing key (`LOCAL_IDP_SIGNING_KEY`) |
+| **Refresh tokens** | IdP manages | No refresh tokens (request new task identity) |
+| **Use case** | Enterprise SSO, production | Development, CI/CD, air-gapped environments |
+
+### Step 1: Start Sidecar with Local IDP
+
+```bash
+export LOCAL_IDP_SIGNING_KEY="your-secret-signing-key"
+
+./predicate-authorityd \
+  --host 127.0.0.1 \
+  --port 8787 \
+  --mode local_only \
+  --policy-file policy.json \
+  --identity-file ./local-identities.json \
+  --identity-mode local-idp \
+  --local-idp-issuer "http://localhost/predicate-local-idp" \
+  --local-idp-audience "api://predicate-authority" \
+  run
+```
+
+### Step 2: Agent Requests Task Identity (Token from Sidecar)
+
+```python
+import httpx
+
+async def get_task_identity(principal_id: str, task_id: str, ttl_seconds: int = 300):
+    """Get a short-lived token from the sidecar itself"""
+    response = await httpx.post(
+        "http://127.0.0.1:8787/identity/task",
+        json={
+            "principal_id": principal_id,
+            "task_id": task_id,
+            "ttl_seconds": ttl_seconds
+        }
+    )
+    data = response.json()
+    return data["token"], data["expires_at"]
+
+# Example: Get token for a specific task
+token, expires_at = await get_task_identity(
+    principal_id="agent:payments",
+    task_id="transfer-task-123",
+    ttl_seconds=120  # 2 minutes
+)
+```
+
+### Step 3: Agent Authorizes with Token (Same as External IdP)
+
+```python
+async def authorize_action(token: str, action: str, resource: str):
+    """Same flow as Okta - pass token to sidecar"""
+    response = await httpx.post(
+        "http://127.0.0.1:8787/v1/authorize",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "principal": "agent:payments",
+            "action": action,
+            "resource": resource,
+            "intent_hash": "intent_abc123"
+        }
+    )
+    return response.json()
+
+decision = await authorize_action(
+    token,
+    action="http.post",
+    resource="https://api.vendor.com/transfers"
+)
+```
+
+### No Refresh Tokens - Just Request New Identity
+
+Unlike external IdPs, local-idp doesn't use refresh tokens. When a token expires, simply request a new task identity:
+
+```python
+from datetime import datetime, timedelta
+
+class LocalIdpAgent:
+    """Agent using local-idp mode"""
+
+    def __init__(self, sidecar_url: str, principal_id: str):
+        self.sidecar_url = sidecar_url
+        self.principal_id = principal_id
+        self.token = None
+        self.token_expiry = None
+
+    async def ensure_valid_token(self, task_id: str):
+        """Get new token if expired (no refresh - just request new)"""
+        if self.token and datetime.now() < self.token_expiry - timedelta(seconds=30):
+            return self.token
+
+        # Request new task identity from sidecar
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.sidecar_url}/identity/task",
+                json={
+                    "principal_id": self.principal_id,
+                    "task_id": task_id,
+                    "ttl_seconds": 300
+                }
+            )
+            data = response.json()
+            self.token = data["token"]
+            self.token_expiry = datetime.fromisoformat(data["expires_at"])
+
+        return self.token
+
+    async def authorize(self, task_id: str, action: str, resource: str):
+        """Ensure valid token, then authorize"""
+        token = await self.ensure_valid_token(task_id)
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.sidecar_url}/v1/authorize",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "principal": self.principal_id,
+                    "action": action,
+                    "resource": resource,
+                    "intent_hash": f"intent_{hash(resource)}"
+                }
+            )
+            return response.json()
+```
+
+### When to Use Local IDP vs External IdP
+
+| Use Case | Recommended Mode |
+|----------|-----------------|
+| Enterprise production with SSO | `okta`, `entra`, or `oidc` |
+| Local development | `local` (no tokens) or `local-idp` |
+| Air-gapped environments | `local-idp` |
+| Ephemeral task isolation | `local-idp` |
+| CI/CD pipelines | `local-idp` |
+| Multi-tenant production | `okta` or `entra` |
+
+### Local IDP Summary
+
+**Local IDP mode = Sidecar issues AND validates tokens**
+
+- No external IdP dependency
+- Sidecar signs tokens with `LOCAL_IDP_SIGNING_KEY`
+- Tokens are short-lived (configurable TTL)
+- No refresh tokens - just request new task identity
+- Same `/v1/authorize` flow as external IdP mode (token in `Authorization` header)
+
+The authorization flow after getting the token is identical to external IdP - the only difference is where the token comes from.
+
+---
+
 ## Related Documentation
 
 - [README.md](README.md) - Installation and CLI reference
