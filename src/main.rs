@@ -70,9 +70,9 @@ struct Cli {
     #[arg(long, env = "PREDICATE_PROJECT_ID")]
     project_id: Option<String>,
 
-    /// Auth token for control-plane
-    #[arg(long, env = "PREDICATE_AUTH_TOKEN")]
-    auth_token: Option<String>,
+    /// API key for control-plane authentication
+    #[arg(long = "predicate-api-key", env = "PREDICATE_API_KEY")]
+    api_key: Option<String>,
 
     /// Enable control-plane sync
     #[arg(long, env = "PREDICATE_SYNC_ENABLED")]
@@ -172,7 +172,7 @@ async fn main() -> anyhow::Result<()> {
     let control_plane_url = cli.control_plane_url.or(file_config.control_plane.url);
     let tenant_id = cli.tenant_id.or(file_config.control_plane.tenant_id);
     let project_id = cli.project_id.or(file_config.control_plane.project_id);
-    let auth_token = cli.auth_token.or(file_config.control_plane.auth_token);
+    let api_key = cli.api_key.or(file_config.control_plane.api_key);
     let sync_enabled = cli
         .sync_enabled
         .unwrap_or(file_config.control_plane.sync_enabled);
@@ -262,7 +262,7 @@ async fn main() -> anyhow::Result<()> {
                 base_url: url.clone(),
                 tenant_id: tid.clone(),
                 project_id: pid.clone(),
-                auth_token: auth_token.clone(),
+                api_key: api_key.clone(),
                 timeout_s: file_config.control_plane.timeout_s,
                 max_retries: file_config.control_plane.max_retries,
                 backoff_initial_s: 0.2,

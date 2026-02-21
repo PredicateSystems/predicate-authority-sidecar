@@ -76,7 +76,7 @@ Options:
       --control-plane-url <URL>        Control-plane base URL
       --tenant-id <TENANT_ID>          Tenant ID for control-plane
       --project-id <PROJECT_ID>        Project ID for control-plane
-      --auth-token <AUTH_TOKEN>        Auth token for control-plane
+      --predicate-api-key <API_KEY>    API key for control-plane authentication
       --sync-enabled                   Enable control-plane sync
       --fail-open                      Fail open if control-plane unreachable
   -h, --help                           Print help
@@ -128,7 +128,7 @@ queue_item_ttl_s = 86400  # 24 hours
 url = "https://api.predicatesystems.dev"
 tenant_id = "your-tenant-id"
 project_id = "your-project-id"
-# auth_token = "prefer-env-var-PREDICATE_AUTH_TOKEN"
+# api_key = "prefer-env-var-PREDICATE_API_KEY"
 sync_enabled = false
 sync_wait_timeout_s = 15.0
 fail_open = true
@@ -247,7 +247,7 @@ Sync policies and revocations from control plane:
   --control-plane-url https://api.predicatesystems.dev \
   --tenant-id your-tenant \
   --project-id your-project \
-  --auth-token $PREDICATE_AUTH_TOKEN \
+  --predicate-api-key $PREDICATE_API_KEY \
   --sync-enabled
 ```
 
