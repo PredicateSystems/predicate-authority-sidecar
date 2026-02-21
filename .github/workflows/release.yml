@@ -147,7 +147,7 @@ jobs:
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.SDK_DISPATCH_TOKEN }}
-          repository: PredicateSystems/ts-predicate-authority
+          repository: PredicateSystems/predicate-authority-ts
           event-type: sidecar-release
           client-payload: |
             {
