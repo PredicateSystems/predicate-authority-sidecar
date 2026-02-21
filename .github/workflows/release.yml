@@ -8,54 +8,12 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: write
+
 jobs:
-  create-release:
-    name: Create GitHub Release
-    runs-on: ubuntu-latest
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref_name }}
-          release_name: Release ${{ github.ref_name }}
-          draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          body: |
-            ## Predicate Authority Daemon ${{ github.ref_name }}
-
-            ### Installation
-
-            Download the appropriate binary for your platform:
-            - **Linux x64**: `predicate-authorityd-linux-x64`
-            - **macOS x64**: `predicate-authorityd-darwin-x64`
-            - **macOS ARM64**: `predicate-authorityd-darwin-arm64`
-            - **Windows x64**: `predicate-authorityd-windows-x64.exe`
-
-            ### Quick Start
-
-            ```bash
-            # Make executable (Linux/macOS)
-            chmod +x predicate-authorityd-*
-
-            # Generate example config
-            ./predicate-authorityd init-config
-
-            # Run the daemon
-            ./predicate-authorityd run --port 8787
-            ```
-
-            See the README for full documentation.
-
   build-release:
     name: Build ${{ matrix.artifact }}
-    needs: create-release
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -123,48 +81,67 @@ jobs:
         run: |
           cd target/${{ matrix.target }}/release
           Compress-Archive -Path predicate-authorityd.exe -DestinationPath ${{ matrix.artifact }}.zip
-          Get-FileHash -Algorithm SHA256 ${{ matrix.artifact }}.zip | Format-List > ${{ matrix.artifact }}.zip.sha256
+          (Get-FileHash -Algorithm SHA256 ${{ matrix.artifact }}.zip).Hash.ToLower() + "  " + "${{ matrix.artifact }}.zip" | Out-File -Encoding utf8 ${{ matrix.artifact }}.zip.sha256
 
-      - name: Upload Release Asset (Unix)
-        if: runner.os != 'Windows'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
         with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: target/${{ matrix.target }}/release/${{ matrix.artifact }}.tar.gz
-          asset_name: ${{ matrix.artifact }}.tar.gz
-          asset_content_type: application/gzip
+          name: ${{ matrix.artifact }}
+          path: |
+            target/${{ matrix.target }}/release/${{ matrix.artifact }}.tar.gz
+            target/${{ matrix.target }}/release/${{ matrix.artifact }}.tar.gz.sha256
+            target/${{ matrix.target }}/release/${{ matrix.artifact }}.zip
+            target/${{ matrix.target }}/release/${{ matrix.artifact }}.zip.sha256
+          if-no-files-found: ignore
 
-      - name: Upload Checksum (Unix)
-        if: runner.os != 'Windows'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: target/${{ matrix.target }}/release/${{ matrix.artifact }}.tar.gz.sha256
-          asset_name: ${{ matrix.artifact }}.tar.gz.sha256
-          asset_content_type: text/plain
+  create-release:
+    name: Create GitHub Release
+    needs: build-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Upload Release Asset (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
         with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: target/${{ matrix.target }}/release/${{ matrix.artifact }}.zip
-          asset_name: ${{ matrix.artifact }}.zip
-          asset_content_type: application/zip
+          path: artifacts
 
-      - name: Upload Checksum (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Collect release files
+        run: |
+          mkdir -p release-files
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.sha256" \) -exec cp {} release-files/ \;
+          ls -la release-files/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
         with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: target/${{ matrix.target }}/release/${{ matrix.artifact }}.zip.sha256
-          asset_name: ${{ matrix.artifact }}.zip.sha256
-          asset_content_type: text/plain
+          files: release-files/*
+          generate_release_notes: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          body: |
+            ## Predicate Authority Daemon ${{ github.ref_name }}
+
+            ### Installation
+
+            Download the appropriate binary for your platform:
+            - **Linux x64**: `predicate-authorityd-linux-x64.tar.gz`
+            - **Linux x64 (musl)**: `predicate-authorityd-linux-x64-musl.tar.gz`
+            - **macOS x64**: `predicate-authorityd-darwin-x64.tar.gz`
+            - **macOS ARM64**: `predicate-authorityd-darwin-arm64.tar.gz`
+            - **Windows x64**: `predicate-authorityd-windows-x64.zip`
+
+            ### Quick Start
+
+            ```bash
+            # Extract (Linux/macOS)
+            tar -xzf predicate-authorityd-*.tar.gz
+            chmod +x predicate-authorityd
+
+            # Generate example config
+            ./predicate-authorityd init-config
+
+            # Run the daemon
+            ./predicate-authorityd --port 8787
+            ```
+
+            See the [README](https://github.com/anthropics/rust-predicate-authorityd#readme) for full documentation.
