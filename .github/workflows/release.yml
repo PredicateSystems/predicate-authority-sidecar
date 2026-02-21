@@ -1,0 +1,170 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          release_name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          body: |
+            ## Predicate Authority Daemon ${{ github.ref_name }}
+
+            ### Installation
+
+            Download the appropriate binary for your platform:
+            - **Linux x64**: `predicate-authorityd-linux-x64`
+            - **macOS x64**: `predicate-authorityd-darwin-x64`
+            - **macOS ARM64**: `predicate-authorityd-darwin-arm64`
+            - **Windows x64**: `predicate-authorityd-windows-x64.exe`
+
+            ### Quick Start
+
+            ```bash
+            # Make executable (Linux/macOS)
+            chmod +x predicate-authorityd-*
+
+            # Generate example config
+            ./predicate-authorityd init-config
+
+            # Run the daemon
+            ./predicate-authorityd run --port 8787
+            ```
+
+            See the README for full documentation.
+
+  build-release:
+    name: Build ${{ matrix.artifact }}
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: predicate-authorityd-linux-x64
+            extension: ""
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact: predicate-authorityd-linux-x64-musl
+            extension: ""
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: predicate-authorityd-darwin-x64
+            extension: ""
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: predicate-authorityd-darwin-arm64
+            extension: ""
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: predicate-authorityd-windows-x64
+            extension: ".exe"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install musl-tools (Linux musl)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-${{ matrix.target }}-
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Prepare binary (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd target/${{ matrix.target }}/release
+          strip predicate-authorityd || true
+          chmod +x predicate-authorityd
+          tar -czvf ${{ matrix.artifact }}.tar.gz predicate-authorityd
+          shasum -a 256 ${{ matrix.artifact }}.tar.gz > ${{ matrix.artifact }}.tar.gz.sha256
+
+      - name: Prepare binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cd target/${{ matrix.target }}/release
+          Compress-Archive -Path predicate-authorityd.exe -DestinationPath ${{ matrix.artifact }}.zip
+          Get-FileHash -Algorithm SHA256 ${{ matrix.artifact }}.zip | Format-List > ${{ matrix.artifact }}.zip.sha256
+
+      - name: Upload Release Asset (Unix)
+        if: runner.os != 'Windows'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: target/${{ matrix.target }}/release/${{ matrix.artifact }}.tar.gz
+          asset_name: ${{ matrix.artifact }}.tar.gz
+          asset_content_type: application/gzip
+
+      - name: Upload Checksum (Unix)
+        if: runner.os != 'Windows'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: target/${{ matrix.target }}/release/${{ matrix.artifact }}.tar.gz.sha256
+          asset_name: ${{ matrix.artifact }}.tar.gz.sha256
+          asset_content_type: text/plain
+
+      - name: Upload Release Asset (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: target/${{ matrix.target }}/release/${{ matrix.artifact }}.zip
+          asset_name: ${{ matrix.artifact }}.zip
+          asset_content_type: application/zip
+
+      - name: Upload Checksum (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: target/${{ matrix.target }}/release/${{ matrix.artifact }}.zip.sha256
+          asset_name: ${{ matrix.artifact }}.zip.sha256
+          asset_content_type: text/plain

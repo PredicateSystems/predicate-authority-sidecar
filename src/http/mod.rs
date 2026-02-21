@@ -1,20 +1,21 @@
 //! HTTP server and request handlers for the sidecar daemon.
 
 use axum::{
-    extract::{Json, State},
+    extract::{Json, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
     Router,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{info, warn};
+use tracing::info;
 
+use crate::identity::{LedgerQueueItem, LocalIdentityRegistry, TaskIdentityRecord};
 use crate::models::{
-    AuthorizationDecision, AuthorizationReason, PolicyRule, SidecarAuthorizeRequest,
-    SidecarAuthorizeResponse,
+    AuthorizationDecision, PolicyRule, SidecarAuthorizeRequest, SidecarAuthorizeResponse,
 };
 use crate::policy::PolicyEngine;
 use crate::proof::InMemoryProofLedger;
@@ -24,6 +25,7 @@ use crate::proof::InMemoryProofLedger;
 pub struct AppState {
     pub policy_engine: Arc<PolicyEngine>,
     pub proof_ledger: Arc<InMemoryProofLedger>,
+    pub identity_registry: Option<Arc<LocalIdentityRegistry>>,
     pub start_time: std::time::Instant,
     pub mode: String,
 }
@@ -33,9 +35,15 @@ impl AppState {
         Self {
             policy_engine: Arc::new(policy_engine),
             proof_ledger: Arc::new(InMemoryProofLedger::new()),
+            identity_registry: None,
             start_time: std::time::Instant::now(),
             mode: mode.to_string(),
         }
+    }
+
+    pub fn with_identity_registry(mut self, registry: LocalIdentityRegistry) -> Self {
+        self.identity_registry = Some(Arc::new(registry));
+        self
     }
 }
 
@@ -56,6 +64,15 @@ pub fn create_router(state: AppState) -> Router {
         .route("/metrics", get(metrics_handler))
         // Policy management
         .route("/policy/reload", post(policy_reload_handler))
+        // Identity management
+        .route("/identity/task", post(identity_task_handler))
+        .route("/identity/revoke", post(identity_revoke_handler))
+        .route("/identity/list", get(identity_list_handler))
+        // Ledger/queue management
+        .route("/ledger/flush-queue", get(ledger_flush_queue_handler))
+        .route("/ledger/flush-now", post(ledger_flush_now_handler))
+        .route("/ledger/dead-letter", get(ledger_dead_letter_handler))
+        .route("/ledger/requeue", post(ledger_requeue_handler))
         .layer(cors)
         .with_state(state)
 }
@@ -204,6 +221,343 @@ async fn policy_reload_handler(
         rule_count,
         message: format!("Loaded {} rules", rule_count),
     })
+}
+
+// --- Identity Management ---
+
+#[derive(Deserialize)]
+struct IdentityTaskRequest {
+    principal_id: String,
+    task_id: String,
+    ttl_seconds: Option<i64>,
+    #[serde(default)]
+    metadata: HashMap<String, String>,
+}
+
+#[derive(Serialize)]
+struct IdentityTaskResponse {
+    success: bool,
+    identity: Option<TaskIdentityRecord>,
+    error: Option<String>,
+}
+
+async fn identity_task_handler(
+    State(state): State<AppState>,
+    Json(request): Json<IdentityTaskRequest>,
+) -> impl IntoResponse {
+    let registry = match &state.identity_registry {
+        Some(r) => r,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(IdentityTaskResponse {
+                    success: false,
+                    identity: None,
+                    error: Some("Local identity registry not enabled".to_string()),
+                }),
+            );
+        }
+    };
+
+    let metadata = if request.metadata.is_empty() {
+        None
+    } else {
+        Some(request.metadata)
+    };
+
+    match registry.issue_task_identity(
+        &request.principal_id,
+        &request.task_id,
+        request.ttl_seconds,
+        metadata,
+    ) {
+        Ok(identity) => (
+            StatusCode::OK,
+            Json(IdentityTaskResponse {
+                success: true,
+                identity: Some(identity),
+                error: None,
+            }),
+        ),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(IdentityTaskResponse {
+                success: false,
+                identity: None,
+                error: Some(e.to_string()),
+            }),
+        ),
+    }
+}
+
+#[derive(Deserialize)]
+struct IdentityRevokeRequest {
+    identity_id: String,
+}
+
+#[derive(Serialize)]
+struct IdentityRevokeResponse {
+    success: bool,
+    error: Option<String>,
+}
+
+async fn identity_revoke_handler(
+    State(state): State<AppState>,
+    Json(request): Json<IdentityRevokeRequest>,
+) -> impl IntoResponse {
+    let registry = match &state.identity_registry {
+        Some(r) => r,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(IdentityRevokeResponse {
+                    success: false,
+                    error: Some("Local identity registry not enabled".to_string()),
+                }),
+            );
+        }
+    };
+
+    if registry.revoke_identity(&request.identity_id) {
+        (
+            StatusCode::OK,
+            Json(IdentityRevokeResponse {
+                success: true,
+                error: None,
+            }),
+        )
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(IdentityRevokeResponse {
+                success: false,
+                error: Some("Identity not found".to_string()),
+            }),
+        )
+    }
+}
+
+#[derive(Deserialize)]
+struct IdentityListQuery {
+    #[serde(default)]
+    include_revoked: bool,
+    #[serde(default)]
+    include_expired: bool,
+}
+
+#[derive(Serialize)]
+struct IdentityListResponse {
+    identities: Vec<TaskIdentityRecord>,
+    count: usize,
+}
+
+async fn identity_list_handler(
+    State(state): State<AppState>,
+    Query(query): Query<IdentityListQuery>,
+) -> impl IntoResponse {
+    let registry = match &state.identity_registry {
+        Some(r) => r,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(IdentityListResponse {
+                    identities: vec![],
+                    count: 0,
+                }),
+            );
+        }
+    };
+
+    let identities = registry.list_identities(query.include_revoked, query.include_expired);
+    let count = identities.len();
+
+    (
+        StatusCode::OK,
+        Json(IdentityListResponse { identities, count }),
+    )
+}
+
+// --- Ledger/Queue Management ---
+
+#[derive(Deserialize)]
+struct FlushQueueQuery {
+    #[serde(default)]
+    include_flushed: bool,
+    #[serde(default)]
+    include_quarantined: bool,
+    limit: Option<usize>,
+    #[serde(default = "default_true_for_redact")]
+    redact_payloads: bool,
+}
+
+fn default_true_for_redact() -> bool {
+    true
+}
+
+#[derive(Serialize)]
+struct FlushQueueResponse {
+    items: Vec<LedgerQueueItem>,
+    count: usize,
+}
+
+async fn ledger_flush_queue_handler(
+    State(state): State<AppState>,
+    Query(query): Query<FlushQueueQuery>,
+) -> impl IntoResponse {
+    let registry = match &state.identity_registry {
+        Some(r) => r,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(FlushQueueResponse {
+                    items: vec![],
+                    count: 0,
+                }),
+            );
+        }
+    };
+
+    let items = registry.list_flush_queue(
+        query.include_flushed,
+        query.include_quarantined,
+        query.limit,
+        query.redact_payloads,
+    );
+    let count = items.len();
+
+    (StatusCode::OK, Json(FlushQueueResponse { items, count }))
+}
+
+#[derive(Deserialize)]
+struct FlushNowRequest {
+    max_items: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct FlushNowResponse {
+    success: bool,
+    scanned: usize,
+    message: String,
+}
+
+async fn ledger_flush_now_handler(
+    State(state): State<AppState>,
+    Json(request): Json<FlushNowRequest>,
+) -> impl IntoResponse {
+    let registry = match &state.identity_registry {
+        Some(r) => r,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(FlushNowResponse {
+                    success: false,
+                    scanned: 0,
+                    message: "Local identity registry not enabled".to_string(),
+                }),
+            );
+        }
+    };
+
+    // Get pending items
+    let items = registry.list_flush_queue(false, false, request.max_items, false);
+    let scanned = items.len();
+
+    // In local_only mode, just mark them as flushed (no control-plane to send to)
+    for item in &items {
+        registry.mark_flush_ack(&item.queue_item_id);
+    }
+
+    (
+        StatusCode::OK,
+        Json(FlushNowResponse {
+            success: true,
+            scanned,
+            message: format!("Flushed {} items", scanned),
+        }),
+    )
+}
+
+#[derive(Deserialize)]
+struct DeadLetterQuery {
+    limit: Option<usize>,
+    #[serde(default = "default_true_for_redact")]
+    redact_payloads: bool,
+}
+
+async fn ledger_dead_letter_handler(
+    State(state): State<AppState>,
+    Query(query): Query<DeadLetterQuery>,
+) -> impl IntoResponse {
+    let registry = match &state.identity_registry {
+        Some(r) => r,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(FlushQueueResponse {
+                    items: vec![],
+                    count: 0,
+                }),
+            );
+        }
+    };
+
+    let items = registry.list_dead_letter_queue(query.limit, query.redact_payloads);
+    let count = items.len();
+
+    (StatusCode::OK, Json(FlushQueueResponse { items, count }))
+}
+
+#[derive(Deserialize)]
+struct RequeueRequest {
+    queue_item_id: String,
+    #[serde(default = "default_true_for_reset")]
+    reset_attempts: bool,
+}
+
+fn default_true_for_reset() -> bool {
+    true
+}
+
+#[derive(Serialize)]
+struct RequeueResponse {
+    success: bool,
+    error: Option<String>,
+}
+
+async fn ledger_requeue_handler(
+    State(state): State<AppState>,
+    Json(request): Json<RequeueRequest>,
+) -> impl IntoResponse {
+    let registry = match &state.identity_registry {
+        Some(r) => r,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(RequeueResponse {
+                    success: false,
+                    error: Some("Local identity registry not enabled".to_string()),
+                }),
+            );
+        }
+    };
+
+    if registry.requeue_item(&request.queue_item_id, request.reset_attempts) {
+        (
+            StatusCode::OK,
+            Json(RequeueResponse {
+                success: true,
+                error: None,
+            }),
+        )
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(RequeueResponse {
+                success: false,
+                error: Some("Queue item not found or not quarantined".to_string()),
+            }),
+        )
+    }
 }
 
 #[cfg(test)]
