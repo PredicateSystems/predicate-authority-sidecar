@@ -64,23 +64,62 @@ cargo build --release
 
 ## CLI Options
 
+**IMPORTANT:** CLI arguments must be placed **before** the `run` subcommand.
+
 ```
-Options:
-  -c, --config <CONFIG>                Path to configuration file (TOML)
-      --host <HOST>                    Host to bind to [env: PREDICATE_HOST]
-      --port <PORT>                    Port to bind to [env: PREDICATE_PORT]
-      --mode <MODE>                    Operating mode: local_only or cloud_connected
-      --policy-file <POLICY_FILE>      Path to policy JSON file
-      --identity-file <IDENTITY_FILE>  Path to local identity registry JSON file
-      --log-level <LOG_LEVEL>          Log level: trace, debug, info, warn, error
-      --control-plane-url <URL>        Control-plane base URL
-      --tenant-id <TENANT_ID>          Tenant ID for control-plane
-      --project-id <PROJECT_ID>        Project ID for control-plane
-      --predicate-api-key <API_KEY>    API key for control-plane authentication
-      --sync-enabled                   Enable control-plane sync
-      --fail-open                      Fail open if control-plane unreachable
-  -h, --help                           Print help
-  -V, --version                        Print version
+GLOBAL OPTIONS (use before 'run'):
+  -c, --config <FILE>           Path to TOML config file [env: PREDICATE_CONFIG]
+      --host <HOST>             Host to bind to [env: PREDICATE_HOST] [default: 127.0.0.1]
+      --port <PORT>             Port to bind to [env: PREDICATE_PORT] [default: 8787]
+      --mode <MODE>             local_only or cloud_connected [env: PREDICATE_MODE]
+      --policy-file <PATH>      Path to policy JSON [env: PREDICATE_POLICY_FILE]
+      --identity-file <PATH>    Path to local identity registry [env: PREDICATE_IDENTITY_FILE]
+      --log-level <LEVEL>       trace, debug, info, warn, error [env: PREDICATE_LOG_LEVEL]
+      --control-plane-url <URL> Control-plane URL [env: PREDICATE_CONTROL_PLANE_URL]
+      --tenant-id <ID>          Tenant ID [env: PREDICATE_TENANT_ID]
+      --project-id <ID>         Project ID [env: PREDICATE_PROJECT_ID]
+      --predicate-api-key <KEY> API key [env: PREDICATE_API_KEY]
+      --sync-enabled            Enable control-plane sync [env: PREDICATE_SYNC_ENABLED]
+      --fail-open               Fail open if control-plane unreachable [env: PREDICATE_FAIL_OPEN]
+
+IDENTITY PROVIDER OPTIONS:
+      --identity-mode <MODE>    local, local-idp, oidc, entra, or okta [env: PREDICATE_IDENTITY_MODE]
+      --allow-local-fallback    Allow local/local-idp in cloud_connected mode [env: PREDICATE_ALLOW_LOCAL_FALLBACK]
+      --idp-token-ttl-s <SECS>  IdP token TTL seconds [env: PREDICATE_IDP_TOKEN_TTL_S] [default: 300]
+      --mandate-ttl-s <SECS>    Mandate TTL seconds [env: PREDICATE_MANDATE_TTL_S] [default: 300]
+
+LOCAL IDP OPTIONS (for identity-mode=local-idp):
+      --local-idp-issuer <URL>  Issuer URL [env: LOCAL_IDP_ISSUER]
+      --local-idp-audience <AUD> Audience [env: LOCAL_IDP_AUDIENCE]
+      --local-idp-signing-key-env <VAR> Env var for signing key [default: LOCAL_IDP_SIGNING_KEY]
+
+OIDC OPTIONS (for identity-mode=oidc):
+      --oidc-issuer <URL>       Issuer URL [env: OIDC_ISSUER]
+      --oidc-client-id <ID>     Client ID [env: OIDC_CLIENT_ID]
+      --oidc-audience <AUD>     Audience [env: OIDC_AUDIENCE]
+
+ENTRA OPTIONS (for identity-mode=entra):
+      --entra-tenant-id <ID>    Tenant ID [env: ENTRA_TENANT_ID]
+      --entra-client-id <ID>    Client ID [env: ENTRA_CLIENT_ID]
+      --entra-audience <AUD>    Audience [env: ENTRA_AUDIENCE]
+
+OKTA OPTIONS (for identity-mode=okta):
+      --okta-issuer <URL>       Issuer URL [env: OKTA_ISSUER]
+      --okta-client-id <ID>     Client ID [env: OKTA_CLIENT_ID]
+      --okta-audience <AUD>     Audience [env: OKTA_AUDIENCE]
+      --okta-required-claims <CLAIMS> Required claims (comma-separated) [env: OKTA_REQUIRED_CLAIMS]
+      --okta-required-scopes <SCOPES> Required scopes (comma-separated) [env: OKTA_REQUIRED_SCOPES]
+      --okta-required-roles <ROLES> Required roles/groups (comma-separated) [env: OKTA_REQUIRED_ROLES]
+      --okta-allowed-tenants <IDS> Allowed tenant IDs (comma-separated) [env: OKTA_ALLOWED_TENANTS]
+      --okta-tenant-claim <NAME> Claim for tenant ID [env: OKTA_TENANT_CLAIM] [default: tenant_id]
+      --okta-scope-claim <NAME> Claim for scopes [env: OKTA_SCOPE_CLAIM] [default: scope]
+      --okta-role-claim <NAME>  Claim for roles [env: OKTA_ROLE_CLAIM] [default: groups]
+
+COMMANDS:
+  run          Start the daemon (default)
+  init-config  Generate example config file
+  check-config Validate config file
+  version      Show version info
 ```
 
 ## Configuration
@@ -234,7 +273,7 @@ Patterns support shell-style wildcards:
 Standalone mode with local policy file and identity registry:
 
 ```bash
-./predicate-authorityd run --mode local_only --policy-file policy.json
+./predicate-authorityd --mode local_only --policy-file policy.json run
 ```
 
 ### Cloud Connected
@@ -242,14 +281,99 @@ Standalone mode with local policy file and identity registry:
 Sync policies and revocations from control plane:
 
 ```bash
-./predicate-authorityd run \
+./predicate-authorityd \
   --mode cloud_connected \
   --control-plane-url https://api.predicatesystems.dev \
   --tenant-id your-tenant \
   --project-id your-project \
   --predicate-api-key $PREDICATE_API_KEY \
-  --sync-enabled
+  --sync-enabled \
+  run
 ```
+
+## Identity Provider Modes
+
+The sidecar supports multiple identity provider modes for token validation on authorization requests.
+
+### Local Mode (Default)
+
+No token validation required. Suitable for development and trusted environments:
+
+```bash
+./predicate-authorityd --identity-mode local --policy-file policy.json run
+```
+
+### Local IDP Mode
+
+Self-issued JWT tokens for ephemeral task identities:
+
+```bash
+export LOCAL_IDP_SIGNING_KEY="your-signing-key"
+
+./predicate-authorityd \
+  --identity-mode local-idp \
+  --local-idp-issuer "http://localhost/predicate-local-idp" \
+  --local-idp-audience "api://predicate-authority" \
+  --policy-file policy.json \
+  run
+```
+
+### OIDC Mode
+
+Generic OIDC provider integration:
+
+```bash
+./predicate-authorityd \
+  --identity-mode oidc \
+  --oidc-issuer "https://your-oidc-provider/.well-known/openid-configuration" \
+  --oidc-client-id "your-client-id" \
+  --oidc-audience "api://predicate-authority" \
+  --policy-file policy.json \
+  run
+```
+
+### Entra Mode
+
+Microsoft Entra ID (Azure AD) integration:
+
+```bash
+./predicate-authorityd \
+  --identity-mode entra \
+  --entra-tenant-id "your-tenant-id" \
+  --entra-client-id "your-client-id" \
+  --entra-audience "api://predicate-authority" \
+  --policy-file policy.json \
+  run
+```
+
+### Okta Mode
+
+Enterprise Okta integration with JWKS validation:
+
+```bash
+export OKTA_ISSUER="https://your-org.okta.com/oauth2/default"
+export OKTA_CLIENT_ID="your-client-id"
+export OKTA_AUDIENCE="api://predicate-authority"
+
+./predicate-authorityd \
+  --identity-mode okta \
+  --okta-issuer "$OKTA_ISSUER" \
+  --okta-client-id "$OKTA_CLIENT_ID" \
+  --okta-audience "$OKTA_AUDIENCE" \
+  --okta-required-claims "sub,tenant_id" \
+  --okta-required-scopes "authority:check" \
+  --okta-required-roles "authority-operator" \
+  --okta-allowed-tenants "tenant-a,tenant-b" \
+  --idp-token-ttl-s 300 \
+  --mandate-ttl-s 300 \
+  --policy-file policy.json \
+  run
+```
+
+### Safety Notes
+
+- **TTL alignment**: Startup enforces `idp-token-ttl-s >= mandate-ttl-s` to prevent mandates from outliving identity session controls.
+- **Cloud-connected safety**: In `cloud_connected` mode, using `local` or `local-idp` identity mode requires explicit `--allow-local-fallback` flag to prevent accidental downgrade to local identity behavior.
 
 ## Graceful Shutdown
 
