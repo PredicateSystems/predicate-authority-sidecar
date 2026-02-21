@@ -4,6 +4,7 @@
 //! for agent actions.
 
 mod http;
+mod identity;
 mod mandate;
 mod models;
 mod policy;
