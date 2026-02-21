@@ -6,6 +6,10 @@ description = "Rust-based sidecar daemon for Predicate Authority"
 license = "MIT"
 repository = "https://github.com/predicatesystems/predicate-authority"
 
+[lib]
+name = "predicate_authorityd"
+path = "src/lib.rs"
+
 [[bin]]
 name = "predicate-authorityd"
 path = "src/main.rs"
@@ -37,6 +41,9 @@ glob = "0.3"
 
 # CLI
 clap = { version = "4", features = ["derive", "env"] }
+
+# Configuration
+toml = "0.8"
 
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }

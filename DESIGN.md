@@ -4,7 +4,7 @@
 
 **Feasibility: HIGH** - A Rust-based sidecar is technically feasible and provides significant benefits. The current Python implementation is well-architected with clean boundaries, making it portable. The TypeScript SDK already communicates via HTTP/JSON, so it works immediately with a Rust sidecar.
 
-**Status**: Phase 1 Complete (Core Authorization)
+**Status**: Phase 5 Complete (Production Ready)
 
 ---
 
@@ -264,3 +264,34 @@ npx predicate-authorityd --port 8787
 3. **Contract tests**: JSON request/response snapshots must match
 4. **Load tests**: Verify Rust performance meets expectations
 5. **Platform tests**: CI matrix for all target platforms
+
+---
+
+## Post-Migration Cleanup
+
+### Phase 6: AgentIdentity SDK Cleanup (Future)
+
+**Prerequisites**: Rust sidecar confirmed working in production
+
+After the Rust sidecar is validated and stable, remove the embedded Python sidecar code from the AgentIdentity SDK:
+
+1. **Remove Python sidecar dependencies** from `AgentIdentity/`:
+   - Remove `predicate-authority` Python package dependency
+   - Remove any bundled sidecar code or wrappers
+
+2. **Update SDK documentation**:
+   - Point to Rust sidecar binary downloads
+   - Update installation instructions to use standalone binary
+
+3. **Remove deprecated code paths**:
+   - Remove any Python subprocess spawning for sidecar
+   - Remove Python sidecar health check code
+   - Clean up any Python-specific configuration handling
+
+4. **Verify SDK tests pass** with Rust sidecar only
+
+**Note**: This cleanup should only proceed after:
+- [ ] Rust sidecar passes all integration tests
+- [ ] Rust sidecar deployed successfully in staging environment
+- [ ] At least 2 weeks of production validation with no issues
+- [ ] SDK team sign-off on migration readiness

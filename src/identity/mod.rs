@@ -653,15 +653,16 @@ mod tests {
     fn test_expire_identities() {
         let (registry, _temp) = test_registry();
 
-        // Issue with 1 second TTL
+        // Issue with 2 second TTL (use 2s to avoid timing edge cases)
         let record = registry
-            .issue_task_identity("agent:test", "task-expire", Some(1), None)
+            .issue_task_identity("agent:test", "task-expire", Some(2), None)
             .unwrap();
 
+        // Should be active immediately after creation
         assert!(registry.is_identity_active(&record.identity_id));
 
-        // Wait for expiration
-        std::thread::sleep(std::time::Duration::from_secs(2));
+        // Wait for expiration (3 seconds to be safe)
+        std::thread::sleep(std::time::Duration::from_secs(3));
 
         assert!(!registry.is_identity_active(&record.identity_id));
 

@@ -9,7 +9,6 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use hmac::{Hmac, Mac};
 use p256::ecdsa::{signature::Signer, signature::Verifier, Signature, SigningKey, VerifyingKey};
-use p256::elliptic_curve::generic_array::GenericArray;
 use parking_lot::RwLock;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -54,13 +53,13 @@ impl SigningKeyMaterial {
 
         // Try to create the signing key from the hash bytes
         // SigningKey::from_bytes performs modular reduction internally
-        let signing_key = match SigningKey::from_bytes(GenericArray::from_slice(&scalar_bytes)) {
+        let signing_key = match SigningKey::from_bytes(&scalar_bytes.into()) {
             Ok(key) => key,
             Err(_) => {
                 // Fallback: hash again if the first attempt fails (extremely unlikely)
                 let fallback_digest = Sha256::digest(digest);
                 let fallback_bytes: [u8; 32] = fallback_digest.into();
-                SigningKey::from_bytes(GenericArray::from_slice(&fallback_bytes))
+                SigningKey::from_bytes(&fallback_bytes.into())
                     .expect("fallback scalar should be valid")
             }
         };
