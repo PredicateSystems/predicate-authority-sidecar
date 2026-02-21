@@ -1,0 +1,55 @@
+[package]
+name = "predicate-authorityd"
+version = "0.1.0"
+edition = "2021"
+description = "Rust-based sidecar daemon for Predicate Authority"
+license = "MIT"
+repository = "https://github.com/predicatesystems/predicate-authority"
+
+[[bin]]
+name = "predicate-authorityd"
+path = "src/main.rs"
+
+[dependencies]
+# HTTP server
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+tower = { version = "0.4", features = ["util"] }
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# HTTP client (for control-plane)
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Cryptography
+jsonwebtoken = "9"
+sha2 = "0.10"
+hmac = "0.12"
+base64 = "0.22"
+
+# Pattern matching (for policy rules)
+glob = "0.3"
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tempfile = "3"
+thiserror = "1"
+anyhow = "1"
+parking_lot = "0.12"
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

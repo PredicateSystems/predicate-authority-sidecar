@@ -1,0 +1,257 @@
+//! HTTP server and request handlers for the sidecar daemon.
+
+use axum::{
+    extract::{Json, State},
+    http::StatusCode,
+    response::IntoResponse,
+    routing::{get, post},
+    Router,
+};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tower_http::cors::{Any, CorsLayer};
+use tracing::{info, warn};
+
+use crate::models::{
+    AuthorizationDecision, AuthorizationReason, PolicyRule, SidecarAuthorizeRequest,
+    SidecarAuthorizeResponse,
+};
+use crate::policy::PolicyEngine;
+use crate::proof::InMemoryProofLedger;
+
+/// Shared application state
+#[derive(Clone)]
+pub struct AppState {
+    pub policy_engine: Arc<PolicyEngine>,
+    pub proof_ledger: Arc<InMemoryProofLedger>,
+    pub start_time: std::time::Instant,
+    pub mode: String,
+}
+
+impl AppState {
+    pub fn new(policy_engine: PolicyEngine, mode: &str) -> Self {
+        Self {
+            policy_engine: Arc::new(policy_engine),
+            proof_ledger: Arc::new(InMemoryProofLedger::new()),
+            start_time: std::time::Instant::now(),
+            mode: mode.to_string(),
+        }
+    }
+}
+
+/// Create the HTTP router with all endpoints
+pub fn create_router(state: AppState) -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
+    Router::new()
+        // Core authorization
+        .route("/v1/authorize", post(authorize_handler))
+        .route("/authorize", post(authorize_handler)) // Legacy alias
+        // Operations
+        .route("/health", get(health_handler))
+        .route("/status", get(status_handler))
+        .route("/metrics", get(metrics_handler))
+        // Policy management
+        .route("/policy/reload", post(policy_reload_handler))
+        .layer(cors)
+        .with_state(state)
+}
+
+// --- Authorization ---
+
+async fn authorize_handler(
+    State(state): State<AppState>,
+    Json(request): Json<SidecarAuthorizeRequest>,
+) -> impl IntoResponse {
+    let result = state.policy_engine.evaluate(&request);
+
+    // Record to proof ledger
+    state.proof_ledger.record_decision(
+        &request.principal,
+        &request.action,
+        &request.resource,
+        result.allowed,
+        result.reason.clone(),
+        None, // No mandate in Phase 1
+    );
+
+    let decision: AuthorizationDecision = result.into();
+    let response: SidecarAuthorizeResponse = decision.into();
+
+    // Return 200 for allowed, 403 for denied (matches Python sidecar behavior)
+    let status = if response.allowed {
+        StatusCode::OK
+    } else {
+        StatusCode::FORBIDDEN
+    };
+
+    (status, Json(response))
+}
+
+// --- Health & Status ---
+
+#[derive(Serialize)]
+struct HealthResponse {
+    status: String,
+    mode: String,
+    uptime_s: u64,
+}
+
+async fn health_handler(State(state): State<AppState>) -> Json<HealthResponse> {
+    Json(HealthResponse {
+        status: "healthy".to_string(),
+        mode: state.mode.clone(),
+        uptime_s: state.start_time.elapsed().as_secs(),
+    })
+}
+
+#[derive(Serialize)]
+struct StatusResponse {
+    status: String,
+    mode: String,
+    uptime_s: u64,
+    rule_count: usize,
+    total_allowed: u64,
+    total_denied: u64,
+    event_count: usize,
+}
+
+async fn status_handler(State(state): State<AppState>) -> Json<StatusResponse> {
+    let stats = state.proof_ledger.stats();
+    Json(StatusResponse {
+        status: "healthy".to_string(),
+        mode: state.mode.clone(),
+        uptime_s: state.start_time.elapsed().as_secs(),
+        rule_count: state.policy_engine.rule_count(),
+        total_allowed: stats.total_allowed,
+        total_denied: stats.total_denied,
+        event_count: state.proof_ledger.event_count(),
+    })
+}
+
+// --- Metrics ---
+
+async fn metrics_handler(State(state): State<AppState>) -> String {
+    let stats = state.proof_ledger.stats();
+    let uptime = state.start_time.elapsed().as_secs();
+
+    let mut output = String::new();
+
+    // Prometheus-style metrics
+    output.push_str("# HELP predicate_authority_uptime_seconds Sidecar uptime in seconds\n");
+    output.push_str("# TYPE predicate_authority_uptime_seconds counter\n");
+    output.push_str(&format!("predicate_authority_uptime_seconds {}\n", uptime));
+
+    output.push_str("# HELP predicate_authority_decisions_total Total authorization decisions\n");
+    output.push_str("# TYPE predicate_authority_decisions_total counter\n");
+    output.push_str(&format!(
+        "predicate_authority_decisions_total{{result=\"allowed\"}} {}\n",
+        stats.total_allowed
+    ));
+    output.push_str(&format!(
+        "predicate_authority_decisions_total{{result=\"denied\"}} {}\n",
+        stats.total_denied
+    ));
+
+    output.push_str("# HELP predicate_authority_denials_by_reason Denials by reason\n");
+    output.push_str("# TYPE predicate_authority_denials_by_reason counter\n");
+    for (reason, count) in &stats.denied_by_reason {
+        output.push_str(&format!(
+            "predicate_authority_denials_by_reason{{reason=\"{}\"}} {}\n",
+            reason, count
+        ));
+    }
+
+    output.push_str("# HELP predicate_authority_policy_rules Number of policy rules\n");
+    output.push_str("# TYPE predicate_authority_policy_rules gauge\n");
+    output.push_str(&format!(
+        "predicate_authority_policy_rules {}\n",
+        state.policy_engine.rule_count()
+    ));
+
+    output
+}
+
+// --- Policy Management ---
+
+#[derive(Deserialize)]
+struct PolicyReloadRequest {
+    #[serde(default)]
+    rules: Vec<PolicyRule>,
+}
+
+#[derive(Serialize)]
+struct PolicyReloadResponse {
+    success: bool,
+    rule_count: usize,
+    message: String,
+}
+
+async fn policy_reload_handler(
+    State(state): State<AppState>,
+    Json(request): Json<PolicyReloadRequest>,
+) -> Json<PolicyReloadResponse> {
+    let rule_count = request.rules.len();
+
+    info!("Reloading policy with {} rules", rule_count);
+    state.policy_engine.replace_rules(request.rules);
+
+    Json(PolicyReloadResponse {
+        success: true,
+        rule_count,
+        message: format!("Loaded {} rules", rule_count),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::util::ServiceExt;
+
+    fn test_state() -> AppState {
+        AppState::new(PolicyEngine::new(), "test")
+    }
+
+    #[tokio::test]
+    async fn test_health_endpoint() {
+        let app = create_router(test_state());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_no_rules_returns_403() {
+        let app = create_router(test_state());
+
+        let body = r#"{"principal": "agent:test", "action": "test.action", "resource": "test://resource"}"#;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/authorize")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+}
