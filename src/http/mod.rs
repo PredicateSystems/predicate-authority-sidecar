@@ -371,7 +371,10 @@ async fn identity_list_handler(
     let identities = registry.list_identities(query.include_revoked, query.include_expired);
     let count = identities.len();
 
-    (StatusCode::OK, Json(IdentityListResponse { identities, count }))
+    (
+        StatusCode::OK,
+        Json(IdentityListResponse { identities, count }),
+    )
 }
 
 // --- Ledger/Queue Management ---

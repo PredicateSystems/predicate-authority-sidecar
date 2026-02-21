@@ -109,7 +109,8 @@ impl LocalIdentityRegistry {
         let registry = Self {
             file_path: file_path.to_path_buf(),
             default_ttl_seconds: default_ttl_seconds.unwrap_or(DEFAULT_IDENTITY_TTL_SECONDS),
-            queue_item_ttl_seconds: queue_item_ttl_seconds.unwrap_or(DEFAULT_QUEUE_ITEM_TTL_SECONDS),
+            queue_item_ttl_seconds: queue_item_ttl_seconds
+                .unwrap_or(DEFAULT_QUEUE_ITEM_TTL_SECONDS),
             store: Arc::new(RwLock::new(RegistryStore::default())),
         };
 
@@ -186,7 +187,11 @@ impl LocalIdentityRegistry {
     }
 
     /// List all identities
-    pub fn list_identities(&self, include_revoked: bool, include_expired: bool) -> Vec<TaskIdentityRecord> {
+    pub fn list_identities(
+        &self,
+        include_revoked: bool,
+        include_expired: bool,
+    ) -> Vec<TaskIdentityRecord> {
         let now = Self::now_epoch();
         let store = self.store.read();
         store
@@ -194,8 +199,7 @@ impl LocalIdentityRegistry {
             .values()
             .filter(|r| {
                 let is_expired = now >= r.expires_at_epoch_s;
-                let include = (include_revoked || !r.revoked)
-                    && (include_expired || !is_expired);
+                let include = (include_revoked || !r.revoked) && (include_expired || !is_expired);
                 include
             })
             .cloned()
@@ -375,14 +379,21 @@ impl LocalIdentityRegistry {
 
         // Redact payloads if requested
         if redact_payloads {
-            items = items.into_iter().map(|i| Self::redact_queue_item(i)).collect();
+            items = items
+                .into_iter()
+                .map(|i| Self::redact_queue_item(i))
+                .collect();
         }
 
         items
     }
 
     /// List dead-letter queue items
-    pub fn list_dead_letter_queue(&self, limit: Option<usize>, redact_payloads: bool) -> Vec<LedgerQueueItem> {
+    pub fn list_dead_letter_queue(
+        &self,
+        limit: Option<usize>,
+        redact_payloads: bool,
+    ) -> Vec<LedgerQueueItem> {
         let store = self.store.read();
         let mut items: Vec<_> = store
             .flush_queue
@@ -401,7 +412,10 @@ impl LocalIdentityRegistry {
 
         // Redact payloads if requested
         if redact_payloads {
-            items = items.into_iter().map(|i| Self::redact_queue_item(i)).collect();
+            items = items
+                .into_iter()
+                .map(|i| Self::redact_queue_item(i))
+                .collect();
         }
 
         items
@@ -523,7 +537,9 @@ impl LocalIdentityRegistry {
         drop(store);
 
         // Atomic write using temp file + rename
-        let tmp_path = self.file_path.with_extension(format!("{}.tmp", Uuid::new_v4()));
+        let tmp_path = self
+            .file_path
+            .with_extension(format!("{}.tmp", Uuid::new_v4()));
 
         if fs::write(&tmp_path, &json).is_ok() {
             if fs::rename(&tmp_path, &self.file_path).is_ok() {
@@ -806,10 +822,7 @@ mod tests {
         assert!(payload["mandate_id"].as_str().unwrap().contains("REDACTED"));
 
         // Verify non-sensitive metadata is preserved (matches Python behavior)
-        assert_eq!(
-            payload["source"].as_str().unwrap(),
-            "predicate-authorityd"
-        );
+        assert_eq!(payload["source"].as_str().unwrap(), "predicate-authorityd");
         assert_eq!(
             payload["event_type"].as_str().unwrap(),
             "authorization_allowed"
