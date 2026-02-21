@@ -16,7 +16,7 @@ This sidecar enforces policy rules for agent actions, providing:
 
 ### Download Binary
 
-Download the latest release for your platform from [GitHub Releases](https://github.com/predicatesystems/predicate-authority/releases):
+Download the latest release for your platform from [GitHub Releases](https://github.com/PredicateSystems/predicate-authority-sidecar/releases):
 
 - **Linux x64**: `predicate-authorityd-linux-x64.tar.gz`
 - **Linux x64 (musl)**: `predicate-authorityd-linux-x64-musl.tar.gz`
