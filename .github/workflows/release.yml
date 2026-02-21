@@ -136,3 +136,33 @@ jobs:
             ```
 
             See the [README](https://github.com/anthropics/rust-predicate-authorityd#readme) for full documentation.
+
+  # Trigger SDK repos to update their bundled binaries
+  trigger-sdk-releases:
+    name: Trigger SDK Binary Updates
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger TypeScript SDK binary update
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.SDK_DISPATCH_TOKEN }}
+          repository: PredicateSystems/ts-predicate-authority
+          event-type: sidecar-release
+          client-payload: |
+            {
+              "version": "${{ github.ref_name }}",
+              "release_url": "https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}"
+            }
+
+      - name: Trigger Python SDK binary update
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.SDK_DISPATCH_TOKEN }}
+          repository: PredicateSystems/predicate-authority
+          event-type: sidecar-release
+          client-payload: |
+            {
+              "version": "${{ github.ref_name }}",
+              "release_url": "https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}"
+            }
