@@ -3,6 +3,8 @@
 //! A high-performance authorization sidecar that enforces policy rules
 //! for agent actions.
 
+mod bridge;
+mod control_plane;
 mod http;
 mod identity;
 mod mandate;

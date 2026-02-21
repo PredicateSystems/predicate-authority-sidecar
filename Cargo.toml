@@ -47,6 +47,7 @@ tempfile = "3"
 thiserror = "1"
 anyhow = "1"
 parking_lot = "0.12"
+urlencoding = "2"
 
 [dev-dependencies]
 tokio-test = "0.4"
