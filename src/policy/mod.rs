@@ -2,7 +2,6 @@
 //!
 //! Uses glob-style pattern matching for principals, actions, and resources.
 //!
-//! Note: Some methods are defined for future HTTP endpoint integration (Phase 5).
 
 #![allow(dead_code)]
 

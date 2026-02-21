@@ -22,6 +22,9 @@ pub struct Config {
     /// Identity registry configuration
     pub identity: IdentityConfig,
 
+    /// Identity provider configuration
+    pub idp: IdpConfig,
+
     /// Control-plane configuration
     pub control_plane: ControlPlaneFileConfig,
 
@@ -91,6 +94,154 @@ impl Default for IdentityConfig {
             file: None,
             default_ttl_s: 900,      // 15 minutes
             queue_item_ttl_s: 86400, // 24 hours
+        }
+    }
+}
+
+/// Identity provider configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct IdpConfig {
+    /// Identity mode: local, local-idp, oidc, entra, or okta
+    pub mode: String,
+
+    /// Allow local/local-idp identity in cloud_connected mode
+    pub allow_local_fallback: bool,
+
+    /// IdP token TTL in seconds
+    pub idp_token_ttl_s: i64,
+
+    /// Mandate TTL in seconds
+    pub mandate_ttl_s: i64,
+
+    /// Local IdP configuration
+    pub local_idp: LocalIdpConfig,
+
+    /// OIDC configuration
+    pub oidc: OidcConfig,
+
+    /// Entra (Azure AD) configuration
+    pub entra: EntraConfig,
+
+    /// Okta configuration
+    pub okta: OktaConfig,
+}
+
+impl Default for IdpConfig {
+    fn default() -> Self {
+        Self {
+            mode: "local".to_string(),
+            allow_local_fallback: false,
+            idp_token_ttl_s: 300,
+            mandate_ttl_s: 300,
+            local_idp: LocalIdpConfig::default(),
+            oidc: OidcConfig::default(),
+            entra: EntraConfig::default(),
+            okta: OktaConfig::default(),
+        }
+    }
+}
+
+/// Local IdP configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LocalIdpConfig {
+    /// Issuer URL
+    pub issuer: String,
+
+    /// Audience
+    pub audience: String,
+
+    /// Environment variable name for signing key
+    pub signing_key_env: String,
+}
+
+impl Default for LocalIdpConfig {
+    fn default() -> Self {
+        Self {
+            issuer: "http://localhost/predicate-local-idp".to_string(),
+            audience: "api://predicate-authority".to_string(),
+            signing_key_env: "LOCAL_IDP_SIGNING_KEY".to_string(),
+        }
+    }
+}
+
+/// OIDC configuration
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OidcConfig {
+    /// Issuer URL
+    pub issuer: Option<String>,
+
+    /// Client ID
+    pub client_id: Option<String>,
+
+    /// Audience
+    pub audience: Option<String>,
+}
+
+/// Entra (Azure AD) configuration
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EntraConfig {
+    /// Tenant ID
+    pub tenant_id: Option<String>,
+
+    /// Client ID
+    pub client_id: Option<String>,
+
+    /// Audience
+    pub audience: Option<String>,
+}
+
+/// Okta configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OktaConfig {
+    /// Issuer URL
+    pub issuer: Option<String>,
+
+    /// Client ID
+    pub client_id: Option<String>,
+
+    /// Audience
+    pub audience: Option<String>,
+
+    /// Required claims (comma-separated)
+    pub required_claims: Vec<String>,
+
+    /// Required scopes (comma-separated)
+    pub required_scopes: Vec<String>,
+
+    /// Required roles/groups (comma-separated)
+    pub required_roles: Vec<String>,
+
+    /// Allowed tenant identifiers
+    pub allowed_tenants: Vec<String>,
+
+    /// Claim name for tenant identifier
+    pub tenant_claim: String,
+
+    /// Claim name for scopes
+    pub scope_claim: String,
+
+    /// Claim name for roles/groups
+    pub role_claim: String,
+}
+
+impl Default for OktaConfig {
+    fn default() -> Self {
+        Self {
+            issuer: None,
+            client_id: None,
+            audience: None,
+            required_claims: Vec::new(),
+            required_scopes: Vec::new(),
+            required_roles: Vec::new(),
+            allowed_tenants: Vec::new(),
+            tenant_claim: "tenant_id".to_string(),
+            scope_claim: "scope".to_string(),
+            role_claim: "groups".to_string(),
         }
     }
 }
@@ -215,6 +366,45 @@ hot_reload_interval_s = 30
 # file = "~/.predicate/local-identity-registry.json"
 default_ttl_s = 900      # 15 minutes
 queue_item_ttl_s = 86400 # 24 hours
+
+# Identity Provider Configuration
+# Supported modes: local, local-idp, oidc, entra, okta
+[idp]
+mode = "local"
+allow_local_fallback = false  # Required when using local/local-idp in cloud_connected mode
+idp_token_ttl_s = 300
+mandate_ttl_s = 300           # Must be <= idp_token_ttl_s
+
+# Local IdP settings (for local-idp mode)
+[idp.local_idp]
+issuer = "http://localhost/predicate-local-idp"
+audience = "api://predicate-authority"
+signing_key_env = "LOCAL_IDP_SIGNING_KEY"
+
+# OIDC settings (for oidc mode)
+[idp.oidc]
+# issuer = "https://your-oidc-provider.com"
+# client_id = "your-client-id"
+# audience = "api://predicate-authority"
+
+# Entra (Azure AD) settings (for entra mode)
+[idp.entra]
+# tenant_id = "your-tenant-id"
+# client_id = "your-client-id"
+# audience = "api://predicate-authority"
+
+# Okta settings (for okta mode)
+[idp.okta]
+# issuer = "https://your-org.okta.com/oauth2/default"
+# client_id = "your-client-id"
+# audience = "api://predicate-authority"
+# required_claims = ["sub", "tenant_id"]
+# required_scopes = ["authority:check"]
+# required_roles = ["authority-operator"]
+# allowed_tenants = ["tenant-a", "tenant-b"]
+tenant_claim = "tenant_id"
+scope_claim = "scope"
+role_claim = "groups"
 
 [control_plane]
 # url = "https://api.predicatesystems.dev"

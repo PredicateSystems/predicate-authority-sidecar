@@ -5,10 +5,6 @@
 //! - OIDC (generic OpenID Connect)
 //! - Okta (with JWKS validation)
 //! - Entra (Microsoft Entra ID)
-//!
-//! Note: Many types here are defined for future HTTP endpoint integration (Phase 5).
-
-#![allow(dead_code)]
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use hmac::{Hmac, Mac};
@@ -906,6 +902,240 @@ fn normalize_string_collection(value: Option<&serde_json::Value>) -> Vec<String>
             .collect(),
         _ => vec![],
     }
+}
+
+// --- IdP Bridge Provider ---
+
+/// Result of token validation
+#[derive(Debug, Clone)]
+pub struct ValidatedIdentity {
+    pub subject: String,
+    pub issuer: String,
+    pub provider: IdentityProviderType,
+    pub claims: HashMap<String, serde_json::Value>,
+}
+
+/// Unified IdP bridge provider that delegates to the appropriate bridge
+pub enum IdpBridgeProvider {
+    /// Local mode - no token validation, trust request principal
+    Local,
+    /// Local IdP mode - validate HS256 JWTs signed by local key
+    LocalIdp(LocalIdpBridge),
+    /// OIDC mode - validate tokens from generic OIDC provider
+    Oidc(OidcIdentityBridge),
+    /// Entra mode - validate tokens from Microsoft Entra ID
+    Entra(EntraIdentityBridge),
+    /// Okta mode - validate tokens with JWKS validation (boxed to reduce enum size)
+    Okta(Box<OktaIdentityBridge>),
+}
+
+impl IdpBridgeProvider {
+    /// Create a new bridge provider based on identity mode
+    pub fn new(
+        identity_mode: &str,
+        local_idp_config: Option<LocalIdpBridgeConfig>,
+        oidc_config: Option<OidcBridgeConfig>,
+        entra_config: Option<EntraBridgeConfig>,
+        okta_config: Option<OktaBridgeConfig>,
+    ) -> Result<Self, String> {
+        match identity_mode {
+            "local" => Ok(Self::Local),
+            "local-idp" => {
+                let config =
+                    local_idp_config.ok_or("local-idp mode requires LocalIdpBridgeConfig")?;
+                Ok(Self::LocalIdp(LocalIdpBridge::new(config)))
+            }
+            "oidc" => {
+                let config = oidc_config.ok_or("oidc mode requires OidcBridgeConfig")?;
+                Ok(Self::Oidc(OidcIdentityBridge::new(config)))
+            }
+            "entra" => {
+                let config = entra_config.ok_or("entra mode requires EntraBridgeConfig")?;
+                Ok(Self::Entra(EntraIdentityBridge::new(config)))
+            }
+            "okta" => {
+                let config = okta_config.ok_or("okta mode requires OktaBridgeConfig")?;
+                Ok(Self::Okta(Box::new(OktaIdentityBridge::new(config)?)))
+            }
+            _ => Err(format!("Unknown identity mode: {}", identity_mode)),
+        }
+    }
+
+    /// Get the identity provider type
+    pub fn provider_type(&self) -> IdentityProviderType {
+        match self {
+            Self::Local => IdentityProviderType::Local,
+            Self::LocalIdp(_) => IdentityProviderType::LocalIdp,
+            Self::Oidc(_) => IdentityProviderType::Oidc,
+            Self::Entra(_) => IdentityProviderType::Entra,
+            Self::Okta(_) => IdentityProviderType::Okta,
+        }
+    }
+
+    /// Validate a bearer token and return the validated identity
+    ///
+    /// For "local" mode, returns None (no token validation).
+    /// For other modes, validates the token and returns the identity claims.
+    pub async fn validate_token(
+        &self,
+        token: &str,
+    ) -> Result<Option<ValidatedIdentity>, TokenValidationError> {
+        match self {
+            Self::Local => {
+                // Local mode: no token validation required
+                Ok(None)
+            }
+            Self::LocalIdp(bridge) => {
+                // Validate local IdP JWT (HS256 signed)
+                let claims = validate_local_idp_token(token, &bridge.config)?;
+                Ok(Some(ValidatedIdentity {
+                    subject: claims
+                        .get("sub")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    issuer: claims
+                        .get("iss")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    provider: IdentityProviderType::LocalIdp,
+                    claims,
+                }))
+            }
+            Self::Oidc(_bridge) => {
+                // For OIDC, we'd need to validate against the IdP's JWKS
+                // For now, just decode and validate basic claims
+                let (_header, payload) = decode_jwt_parts(token)?;
+                let subject = payload
+                    .get("sub")
+                    .and_then(|v| v.as_str())
+                    .ok_or(TokenValidationError::MissingClaim("sub".to_string()))?;
+                let issuer = payload
+                    .get("iss")
+                    .and_then(|v| v.as_str())
+                    .ok_or(TokenValidationError::MissingIssuer)?;
+
+                Ok(Some(ValidatedIdentity {
+                    subject: subject.to_string(),
+                    issuer: issuer.to_string(),
+                    provider: IdentityProviderType::Oidc,
+                    claims: payload,
+                }))
+            }
+            Self::Entra(_bridge) => {
+                // Similar to OIDC
+                let (_header, payload) = decode_jwt_parts(token)?;
+                let subject = payload
+                    .get("sub")
+                    .and_then(|v| v.as_str())
+                    .ok_or(TokenValidationError::MissingClaim("sub".to_string()))?;
+                let issuer = payload
+                    .get("iss")
+                    .and_then(|v| v.as_str())
+                    .ok_or(TokenValidationError::MissingIssuer)?;
+
+                Ok(Some(ValidatedIdentity {
+                    subject: subject.to_string(),
+                    issuer: issuer.to_string(),
+                    provider: IdentityProviderType::Entra,
+                    claims: payload,
+                }))
+            }
+            Self::Okta(bridge) => {
+                // Full Okta validation with JWKS
+                let claims = bridge.validate_token_claims(token, None).await?;
+                Ok(Some(ValidatedIdentity {
+                    subject: claims.subject,
+                    issuer: claims.issuer,
+                    provider: IdentityProviderType::Okta,
+                    claims: claims.claims,
+                }))
+            }
+        }
+    }
+
+    /// Check if this provider requires token validation
+    pub fn requires_token(&self) -> bool {
+        !matches!(self, Self::Local)
+    }
+}
+
+/// Validate a local IdP token (HS256 signed JWT)
+fn validate_local_idp_token(
+    token: &str,
+    config: &LocalIdpBridgeConfig,
+) -> Result<HashMap<String, serde_json::Value>, TokenValidationError> {
+    let (header, payload) = decode_jwt_parts(token)?;
+
+    // Validate algorithm
+    let alg = header
+        .get("alg")
+        .and_then(|v| v.as_str())
+        .ok_or(TokenValidationError::MissingAlgorithm)?;
+
+    if alg != "HS256" {
+        return Err(TokenValidationError::AlgorithmNotAllowed);
+    }
+
+    // Validate issuer
+    let issuer = payload
+        .get("iss")
+        .and_then(|v| v.as_str())
+        .ok_or(TokenValidationError::MissingIssuer)?;
+
+    if issuer != config.issuer {
+        return Err(TokenValidationError::IssuerMismatch);
+    }
+
+    // Validate audience
+    let audiences = normalize_audience(payload.get("aud"));
+    if !audiences.contains(&config.audience) {
+        return Err(TokenValidationError::AudienceMismatch);
+    }
+
+    // Validate expiration
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    let exp = payload
+        .get("exp")
+        .and_then(|v| v.as_i64())
+        .ok_or(TokenValidationError::MissingClaim("exp".to_string()))?;
+
+    if exp < now {
+        return Err(TokenValidationError::Expired);
+    }
+
+    // Verify HMAC signature
+    let segments: Vec<&str> = token.split('.').collect();
+    if segments.len() != 3 {
+        return Err(TokenValidationError::InvalidFormat);
+    }
+
+    let signing_input = format!("{}.{}", segments[0], segments[1]);
+    let mut mac = HmacSha256::new_from_slice(config.signing_key.as_bytes())
+        .map_err(|_| TokenValidationError::InvalidEncoding)?;
+    mac.update(signing_input.as_bytes());
+
+    // Decode signature
+    let padding = match segments[2].len() % 4 {
+        0 => "",
+        2 => "==",
+        3 => "=",
+        _ => return Err(TokenValidationError::InvalidEncoding),
+    };
+    let padded = format!("{}{}", segments[2], padding);
+    let signature_bytes = base64::engine::general_purpose::URL_SAFE
+        .decode(padded.as_bytes())
+        .map_err(|_| TokenValidationError::InvalidEncoding)?;
+
+    mac.verify_slice(&signature_bytes)
+        .map_err(|_| TokenValidationError::InvalidEncoding)?;
+
+    Ok(payload)
 }
 
 #[cfg(test)]

@@ -11,6 +11,7 @@ use tokio::signal;
 use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
+use predicate_authorityd::bridge;
 use predicate_authorityd::config::Config;
 use predicate_authorityd::control_plane::{
     ControlPlaneClient, ControlPlaneConfig, RevocationCache,
@@ -89,6 +90,103 @@ struct Cli {
     /// Fail open if control-plane is unreachable
     #[arg(long, env = "PREDICATE_FAIL_OPEN")]
     fail_open: Option<bool>,
+
+    // --- Identity provider options ---
+    /// Identity mode: local, local-idp, oidc, entra, or okta
+    #[arg(long, env = "PREDICATE_IDENTITY_MODE", value_parser = ["local", "local-idp", "oidc", "entra", "okta"])]
+    identity_mode: Option<String>,
+
+    /// Allow local/local-idp identity in cloud_connected mode (requires explicit opt-in)
+    #[arg(long, env = "PREDICATE_ALLOW_LOCAL_FALLBACK")]
+    allow_local_fallback: bool,
+
+    /// IdP token TTL in seconds
+    #[arg(long, env = "PREDICATE_IDP_TOKEN_TTL_S")]
+    idp_token_ttl_s: Option<i64>,
+
+    /// Mandate TTL in seconds (should be <= idp_token_ttl_s)
+    #[arg(long, env = "PREDICATE_MANDATE_TTL_S")]
+    mandate_ttl_s: Option<i64>,
+
+    // --- Local IdP options ---
+    /// Local IdP issuer URL
+    #[arg(long, env = "LOCAL_IDP_ISSUER")]
+    local_idp_issuer: Option<String>,
+
+    /// Local IdP audience
+    #[arg(long, env = "LOCAL_IDP_AUDIENCE")]
+    local_idp_audience: Option<String>,
+
+    /// Environment variable name for Local IdP signing key
+    #[arg(long, default_value = "LOCAL_IDP_SIGNING_KEY")]
+    local_idp_signing_key_env: String,
+
+    // --- OIDC options ---
+    /// OIDC issuer URL
+    #[arg(long, env = "OIDC_ISSUER")]
+    oidc_issuer: Option<String>,
+
+    /// OIDC client ID
+    #[arg(long, env = "OIDC_CLIENT_ID")]
+    oidc_client_id: Option<String>,
+
+    /// OIDC audience
+    #[arg(long, env = "OIDC_AUDIENCE")]
+    oidc_audience: Option<String>,
+
+    // --- Entra (Azure AD) options ---
+    /// Entra tenant ID
+    #[arg(long, env = "ENTRA_TENANT_ID")]
+    entra_tenant_id: Option<String>,
+
+    /// Entra client ID
+    #[arg(long, env = "ENTRA_CLIENT_ID")]
+    entra_client_id: Option<String>,
+
+    /// Entra audience
+    #[arg(long, env = "ENTRA_AUDIENCE")]
+    entra_audience: Option<String>,
+
+    // --- Okta options ---
+    /// Okta issuer URL
+    #[arg(long, env = "OKTA_ISSUER")]
+    okta_issuer: Option<String>,
+
+    /// Okta client ID
+    #[arg(long, env = "OKTA_CLIENT_ID")]
+    okta_client_id: Option<String>,
+
+    /// Okta audience
+    #[arg(long, env = "OKTA_AUDIENCE")]
+    okta_audience: Option<String>,
+
+    /// Required Okta claims (comma-separated, can be repeated)
+    #[arg(long, env = "OKTA_REQUIRED_CLAIMS", value_delimiter = ',')]
+    okta_required_claims: Vec<String>,
+
+    /// Required Okta scopes (comma-separated, can be repeated)
+    #[arg(long, env = "OKTA_REQUIRED_SCOPES", value_delimiter = ',')]
+    okta_required_scopes: Vec<String>,
+
+    /// Required Okta roles/groups (comma-separated, can be repeated)
+    #[arg(long, env = "OKTA_REQUIRED_ROLES", value_delimiter = ',')]
+    okta_required_roles: Vec<String>,
+
+    /// Allowed tenant identifiers (comma-separated, can be repeated)
+    #[arg(long, env = "OKTA_ALLOWED_TENANTS", value_delimiter = ',')]
+    okta_allowed_tenants: Vec<String>,
+
+    /// Claim name carrying tenant identifier
+    #[arg(long, env = "OKTA_TENANT_CLAIM", default_value = "tenant_id")]
+    okta_tenant_claim: String,
+
+    /// Claim name carrying scopes
+    #[arg(long, env = "OKTA_SCOPE_CLAIM", default_value = "scope")]
+    okta_scope_claim: String,
+
+    /// Claim name carrying roles/groups
+    #[arg(long, env = "OKTA_ROLE_CLAIM", default_value = "groups")]
+    okta_role_claim: String,
 }
 
 #[derive(Subcommand, Debug)]
@@ -184,6 +282,71 @@ async fn main() -> anyhow::Result<()> {
         .or(file_config.control_plane.sync_environment);
     let fail_open = cli.fail_open.unwrap_or(file_config.control_plane.fail_open);
 
+    // Identity provider configuration
+    let identity_mode = cli.identity_mode.unwrap_or(file_config.idp.mode.clone());
+    let allow_local_fallback = cli.allow_local_fallback || file_config.idp.allow_local_fallback;
+    let idp_token_ttl_s = cli
+        .idp_token_ttl_s
+        .unwrap_or(file_config.idp.idp_token_ttl_s);
+    let mandate_ttl_s = cli.mandate_ttl_s.unwrap_or(file_config.idp.mandate_ttl_s);
+
+    // Local IdP config
+    let local_idp_issuer = cli
+        .local_idp_issuer
+        .unwrap_or(file_config.idp.local_idp.issuer.clone());
+    let local_idp_audience = cli
+        .local_idp_audience
+        .unwrap_or(file_config.idp.local_idp.audience.clone());
+    let local_idp_signing_key_env = cli.local_idp_signing_key_env;
+
+    // OIDC config
+    let oidc_issuer = cli.oidc_issuer.or(file_config.idp.oidc.issuer.clone());
+    let oidc_client_id = cli
+        .oidc_client_id
+        .or(file_config.idp.oidc.client_id.clone());
+    let oidc_audience = cli.oidc_audience.or(file_config.idp.oidc.audience.clone());
+
+    // Entra config
+    let entra_tenant_id = cli
+        .entra_tenant_id
+        .or(file_config.idp.entra.tenant_id.clone());
+    let entra_client_id = cli
+        .entra_client_id
+        .or(file_config.idp.entra.client_id.clone());
+    let entra_audience = cli
+        .entra_audience
+        .or(file_config.idp.entra.audience.clone());
+
+    // Okta config
+    let okta_issuer = cli.okta_issuer.or(file_config.idp.okta.issuer.clone());
+    let okta_client_id = cli
+        .okta_client_id
+        .or(file_config.idp.okta.client_id.clone());
+    let okta_audience = cli.okta_audience.or(file_config.idp.okta.audience.clone());
+    let okta_required_claims = if cli.okta_required_claims.is_empty() {
+        file_config.idp.okta.required_claims.clone()
+    } else {
+        cli.okta_required_claims
+    };
+    let okta_required_scopes = if cli.okta_required_scopes.is_empty() {
+        file_config.idp.okta.required_scopes.clone()
+    } else {
+        cli.okta_required_scopes
+    };
+    let okta_required_roles = if cli.okta_required_roles.is_empty() {
+        file_config.idp.okta.required_roles.clone()
+    } else {
+        cli.okta_required_roles
+    };
+    let okta_allowed_tenants = if cli.okta_allowed_tenants.is_empty() {
+        file_config.idp.okta.allowed_tenants.clone()
+    } else {
+        cli.okta_allowed_tenants
+    };
+    let okta_tenant_claim = cli.okta_tenant_claim;
+    let okta_scope_claim = cli.okta_scope_claim;
+    let okta_role_claim = cli.okta_role_claim;
+
     // Initialize logging
     let level = match log_level.as_str() {
         "trace" => Level::TRACE,
@@ -206,6 +369,65 @@ async fn main() -> anyhow::Result<()> {
         env!("CARGO_PKG_VERSION")
     );
     info!("Mode: {}", mode);
+    info!("Identity mode: {}", identity_mode);
+
+    // Validate TTL constraints: idp_token_ttl_s >= mandate_ttl_s
+    if idp_token_ttl_s < mandate_ttl_s {
+        return Err(anyhow::anyhow!(
+            "idp_token_ttl_s ({}) must be >= mandate_ttl_s ({})",
+            idp_token_ttl_s,
+            mandate_ttl_s
+        ));
+    }
+
+    // Validate local fallback in cloud_connected mode
+    if mode == "cloud_connected"
+        && (identity_mode == "local" || identity_mode == "local-idp")
+        && !allow_local_fallback
+    {
+        return Err(anyhow::anyhow!(
+            "cloud_connected mode with {0} identity requires explicit --allow-local-fallback. \
+             Without this flag, implicit local fallback is denied for security.",
+            identity_mode
+        ));
+    }
+
+    // Validate IdP-specific required fields
+    match identity_mode.as_str() {
+        "oidc" => {
+            if oidc_issuer.is_none() || oidc_client_id.is_none() || oidc_audience.is_none() {
+                return Err(anyhow::anyhow!(
+                    "identity-mode=oidc requires --oidc-issuer, --oidc-client-id, and --oidc-audience"
+                ));
+            }
+            info!("OIDC issuer: {}", oidc_issuer.as_ref().unwrap());
+        }
+        "entra" => {
+            if entra_tenant_id.is_none() || entra_client_id.is_none() || entra_audience.is_none() {
+                return Err(anyhow::anyhow!(
+                    "identity-mode=entra requires --entra-tenant-id, --entra-client-id, and --entra-audience"
+                ));
+            }
+            info!("Entra tenant: {}", entra_tenant_id.as_ref().unwrap());
+        }
+        "okta" => {
+            if okta_issuer.is_none() || okta_client_id.is_none() || okta_audience.is_none() {
+                return Err(anyhow::anyhow!(
+                    "identity-mode=okta requires --okta-issuer, --okta-client-id, and --okta-audience"
+                ));
+            }
+            info!("Okta issuer: {}", okta_issuer.as_ref().unwrap());
+        }
+        "local-idp" => {
+            info!("Local IdP issuer: {}", local_idp_issuer);
+        }
+        "local" => {
+            // Local mode requires no additional config
+        }
+        _ => {
+            // Unknown mode - will be caught by IdpBridgeProvider::new()
+        }
+    }
 
     // Initialize policy engine
     let policy_engine = PolicyEngine::new();
@@ -238,6 +460,89 @@ async fn main() -> anyhow::Result<()> {
 
     // Create application state
     let mut state = AppState::new(policy_engine, &mode);
+
+    // Initialize IdP bridge based on identity_mode
+    let local_idp_signing_key = std::env::var(&local_idp_signing_key_env)
+        .unwrap_or_else(|_| "predicate-local-idp-dev-key".to_string());
+
+    let local_idp_config = Some(bridge::LocalIdpBridgeConfig {
+        issuer: local_idp_issuer.clone(),
+        audience: local_idp_audience.clone(),
+        signing_key: local_idp_signing_key,
+        token_ttl_seconds: idp_token_ttl_s,
+    });
+
+    let oidc_config = if let (Some(iss), Some(cid), Some(aud)) = (
+        oidc_issuer.clone(),
+        oidc_client_id.clone(),
+        oidc_audience.clone(),
+    ) {
+        Some(bridge::OidcBridgeConfig {
+            issuer: iss,
+            client_id: cid,
+            audience: aud,
+            token_ttl_seconds: idp_token_ttl_s,
+        })
+    } else {
+        None
+    };
+
+    let entra_config = if let (Some(tid), Some(cid), Some(aud)) = (
+        entra_tenant_id.clone(),
+        entra_client_id.clone(),
+        entra_audience.clone(),
+    ) {
+        Some(bridge::EntraBridgeConfig {
+            tenant_id: tid,
+            client_id: cid,
+            audience: aud,
+            token_ttl_seconds: idp_token_ttl_s,
+        })
+    } else {
+        None
+    };
+
+    let okta_config = if let (Some(iss), Some(cid), Some(aud)) = (
+        okta_issuer.clone(),
+        okta_client_id.clone(),
+        okta_audience.clone(),
+    ) {
+        Some(bridge::OktaBridgeConfig {
+            issuer: iss.clone(),
+            client_id: cid,
+            audience: aud,
+            token_ttl_seconds: idp_token_ttl_s,
+            required_claims: okta_required_claims,
+            allowed_signing_algs: vec!["RS256".to_string()],
+            clock_skew_leeway_seconds: 30,
+            tenant_claim: okta_tenant_claim,
+            scope_claim: okta_scope_claim,
+            role_claim: okta_role_claim,
+            allowed_tenants: okta_allowed_tenants,
+            required_scopes: okta_required_scopes,
+            required_roles: okta_required_roles,
+            enable_jwks_validation: true,
+            jwks_url: None,
+            discovery_url: Some(format!("{}/.well-known/openid-configuration", iss)),
+            jwks_cache_ttl_seconds: 300,
+            jwks_timeout_s: 2.0,
+            jwks_max_retries: 2,
+            jwks_backoff_initial_s: 0.1,
+        })
+    } else {
+        None
+    };
+
+    let idp_bridge = bridge::IdpBridgeProvider::new(
+        &identity_mode,
+        local_idp_config,
+        oidc_config,
+        entra_config,
+        okta_config,
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to create IdP bridge: {}", e))?;
+
+    state = state.with_idp_bridge(idp_bridge, &identity_mode);
 
     // Initialize local identity registry
     let identity_path = identity_file.unwrap_or_else(|| {
