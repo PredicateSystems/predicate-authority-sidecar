@@ -104,12 +104,7 @@ impl InMemoryProofLedger {
     /// Get recent events (newest first)
     pub fn recent_events(&self, limit: usize) -> Vec<ProofEvent> {
         let events = self.events.read();
-        events
-            .iter()
-            .rev()
-            .take(limit)
-            .cloned()
-            .collect()
+        events.iter().rev().take(limit).cloned().collect()
     }
 
     /// Clear all events (useful for testing)
@@ -164,10 +159,7 @@ mod tests {
         let stats = ledger.stats();
         assert_eq!(stats.total_allowed, 0);
         assert_eq!(stats.total_denied, 1);
-        assert_eq!(
-            stats.denied_by_reason.get("explicit_deny"),
-            Some(&1)
-        );
+        assert_eq!(stats.denied_by_reason.get("explicit_deny"), Some(&1));
     }
 
     #[test]
@@ -194,9 +186,30 @@ mod tests {
     fn test_recent_events_order() {
         let ledger = InMemoryProofLedger::new();
 
-        ledger.record_decision("agent:1", "a", "r", true, AuthorizationReason::Allowed, None);
-        ledger.record_decision("agent:2", "a", "r", true, AuthorizationReason::Allowed, None);
-        ledger.record_decision("agent:3", "a", "r", true, AuthorizationReason::Allowed, None);
+        ledger.record_decision(
+            "agent:1",
+            "a",
+            "r",
+            true,
+            AuthorizationReason::Allowed,
+            None,
+        );
+        ledger.record_decision(
+            "agent:2",
+            "a",
+            "r",
+            true,
+            AuthorizationReason::Allowed,
+            None,
+        );
+        ledger.record_decision(
+            "agent:3",
+            "a",
+            "r",
+            true,
+            AuthorizationReason::Allowed,
+            None,
+        );
 
         let recent = ledger.recent_events(2);
         assert_eq!(recent.len(), 2);

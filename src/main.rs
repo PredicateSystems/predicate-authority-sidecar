@@ -4,6 +4,7 @@
 //! for agent actions.
 
 mod http;
+mod mandate;
 mod models;
 mod policy;
 mod proof;
@@ -74,24 +75,22 @@ async fn main() -> anyhow::Result<()> {
     if let Some(ref policy_path) = args.policy_file {
         info!("Loading policy from: {}", policy_path);
         match std::fs::read_to_string(policy_path) {
-            Ok(content) => {
-                match serde_json::from_str::<serde_json::Value>(&content) {
-                    Ok(json) => {
-                        if let Some(rules) = json.get("rules").and_then(|r| r.as_array()) {
-                            let parsed_rules: Vec<models::PolicyRule> = rules
-                                .iter()
-                                .filter_map(|r| serde_json::from_value(r.clone()).ok())
-                                .collect();
-                            let count = parsed_rules.len();
-                            policy_engine.replace_rules(parsed_rules);
-                            info!("Loaded {} policy rules", count);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to parse policy file: {}", e);
+            Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(json) => {
+                    if let Some(rules) = json.get("rules").and_then(|r| r.as_array()) {
+                        let parsed_rules: Vec<models::PolicyRule> = rules
+                            .iter()
+                            .filter_map(|r| serde_json::from_value(r.clone()).ok())
+                            .collect();
+                        let count = parsed_rules.len();
+                        policy_engine.replace_rules(parsed_rules);
+                        info!("Loaded {} policy rules", count);
                     }
                 }
-            }
+                Err(e) => {
+                    tracing::warn!("Failed to parse policy file: {}", e);
+                }
+            },
             Err(e) => {
                 tracing::warn!("Failed to read policy file: {}", e);
             }

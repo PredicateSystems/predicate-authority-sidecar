@@ -52,10 +52,20 @@ impl std::fmt::Display for AuthorizationReason {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrincipalRef {
     pub principal_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+}
+
+impl PrincipalRef {
+    pub fn new(principal_id: &str) -> Self {
+        Self {
+            principal_id: principal_id.to_string(),
+            tenant_id: None,
+            session_id: None,
+        }
+    }
 }
 
 /// Action specification
@@ -73,8 +83,19 @@ pub struct StateEvidence {
     pub state_hash: String,
     #[serde(default = "default_schema_version")]
     pub schema_version: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confidence: Option<f64>,
+}
+
+impl StateEvidence {
+    pub fn new(source: &str, state_hash: &str) -> Self {
+        Self {
+            source: source.to_string(),
+            state_hash: state_hash.to_string(),
+            schema_version: default_schema_version(),
+            confidence: None,
+        }
+    }
 }
 
 fn default_schema_version() -> String {
@@ -99,8 +120,12 @@ fn default_true() -> bool {
 /// Collection of verification signals
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct VerificationEvidence {
+    #[serde(default = "default_schema_version")]
+    pub schema_version: String,
     #[serde(default)]
     pub signals: Vec<VerificationSignal>,
+    #[serde(default = "default_true")]
+    pub verified: bool,
 }
 
 /// Full action request for authorization

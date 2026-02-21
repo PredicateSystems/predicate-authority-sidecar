@@ -285,7 +285,10 @@ mod tests {
         let result = engine.evaluate(&sample_request());
 
         assert!(!result.allowed);
-        assert_eq!(result.reason, AuthorizationReason::MissingRequiredVerification);
+        assert_eq!(
+            result.reason,
+            AuthorizationReason::MissingRequiredVerification
+        );
         assert_eq!(result.missing_labels, vec!["mfa_verified".to_string()]);
     }
 

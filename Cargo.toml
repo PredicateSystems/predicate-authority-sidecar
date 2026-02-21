@@ -29,6 +29,8 @@ jsonwebtoken = "9"
 sha2 = "0.10"
 hmac = "0.12"
 base64 = "0.22"
+p256 = { version = "0.13", features = ["ecdsa"] }
+hex = "0.4"
 
 # Pattern matching (for policy rules)
 glob = "0.3"
