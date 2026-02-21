@@ -556,7 +556,12 @@ impl RevocationCache {
         let by_tag = self.by_tag.read().await;
         let last_updated = *self.last_updated.read().await;
 
-        (by_principal.len(), by_intent.len(), by_tag.len(), last_updated)
+        (
+            by_principal.len(),
+            by_intent.len(),
+            by_tag.len(),
+            last_updated,
+        )
     }
 }
 
@@ -584,7 +589,8 @@ mod tests {
             emitted_at_epoch_s: 1700000000,
         };
 
-        let envelope = AuditEventEnvelope::from_proof_event(&event, "tenant_abc", Some("trace_xyz"));
+        let envelope =
+            AuditEventEnvelope::from_proof_event(&event, "tenant_abc", Some("trace_xyz"));
 
         assert!(envelope.event_id.starts_with("evt_"));
         assert_eq!(envelope.tenant_id, "tenant_abc");

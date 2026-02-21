@@ -859,8 +859,9 @@ fn decode_jwt_parts(
     Ok((header, payload))
 }
 
-fn decode_jwt_segment(segment: &str) -> Result<HashMap<String, serde_json::Value>, TokenValidationError>
-{
+fn decode_jwt_segment(
+    segment: &str,
+) -> Result<HashMap<String, serde_json::Value>, TokenValidationError> {
     let padding = match segment.len() % 4 {
         0 => "",
         2 => "==",
