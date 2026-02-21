@@ -5,6 +5,10 @@
 //! - Revocation lists
 //! - Audit event forwarding
 //! - Usage metering
+//!
+//! Note: Some fields/methods are defined for future HTTP endpoint integration (Phase 5).
+
+#![allow(dead_code)]
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -13,9 +17,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::info;
 
-use crate::models::{PolicyRule, ProofEvent};
+use crate::models::ProofEvent;
 
 /// Control-plane client configuration
 #[derive(Debug, Clone)]

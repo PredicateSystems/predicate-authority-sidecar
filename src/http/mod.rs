@@ -1,7 +1,7 @@
 //! HTTP server and request handlers for the sidecar daemon.
 
 use axum::{
-    extract::{Json, Path, Query, State},
+    extract::{Json, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},

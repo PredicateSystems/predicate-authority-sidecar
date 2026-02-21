@@ -1,6 +1,10 @@
 //! Core data models for Predicate Authority.
 //!
 //! These models mirror `predicate_contracts` from Python for wire compatibility.
+//!
+//! Note: Some types are defined for future HTTP endpoint integration (Phase 5).
+
+#![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
 

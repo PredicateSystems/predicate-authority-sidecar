@@ -1,6 +1,10 @@
 //! Policy engine for evaluating authorization requests against rules.
 //!
 //! Uses glob-style pattern matching for principals, actions, and resources.
+//!
+//! Note: Some methods are defined for future HTTP endpoint integration (Phase 5).
+
+#![allow(dead_code)]
 
 use glob::Pattern;
 use parking_lot::RwLock;
@@ -8,7 +12,6 @@ use std::sync::Arc;
 
 use crate::models::{
     AuthorizationDecision, AuthorizationReason, PolicyEffect, PolicyRule, SidecarAuthorizeRequest,
-    VerificationStatus,
 };
 
 /// Result of matching a request against policy rules

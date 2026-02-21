@@ -5,6 +5,10 @@
 //! - OIDC (generic OpenID Connect)
 //! - Okta (with JWKS validation)
 //! - Entra (Microsoft Entra ID)
+//!
+//! Note: Many types here are defined for future HTTP endpoint integration (Phase 5).
+
+#![allow(dead_code)]
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use hmac::{Hmac, Mac};
@@ -15,7 +19,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
 
 use crate::models::{PrincipalRef, StateEvidence};
 
@@ -831,7 +834,7 @@ impl LocalIdpBridge {
             .expect("HMAC can take any size key");
         mac.update(signing_input.as_bytes());
         let signature = mac.finalize().into_bytes();
-        let signature_b64 = URL_SAFE_NO_PAD.encode(&signature);
+        let signature_b64 = URL_SAFE_NO_PAD.encode(signature);
 
         format!("{}.{}.{}", header_b64, payload_b64, signature_b64)
     }
@@ -839,15 +842,11 @@ impl LocalIdpBridge {
 
 // --- Helper functions ---
 
-fn decode_jwt_parts(
-    token: &str,
-) -> Result<
-    (
-        HashMap<String, serde_json::Value>,
-        HashMap<String, serde_json::Value>,
-    ),
-    TokenValidationError,
-> {
+/// JWT claims map type alias
+type JwtClaims = HashMap<String, serde_json::Value>;
+
+#[allow(clippy::type_complexity)]
+fn decode_jwt_parts(token: &str) -> Result<(JwtClaims, JwtClaims), TokenValidationError> {
     let segments: Vec<&str> = token.split('.').collect();
     if segments.len() != 3 {
         return Err(TokenValidationError::InvalidFormat);
