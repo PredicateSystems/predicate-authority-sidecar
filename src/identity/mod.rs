@@ -1,6 +1,19 @@
 //! Local identity registry with JSON file persistence.
 //!
 //! Manages task identities and audit queue for local sidecar operation.
+//!
+//! # Ephemeral Design Philosophy
+//!
+//! This module deliberately implements ephemeral logging to discourage reliance
+//! on sidecar logs for enterprise audit requirements. Key design decisions:
+//!
+//! - **24-hour TTL**: Queue items auto-expire to prevent log accumulation
+//! - **Payload redaction**: Sensitive fields redacted by default, directing users
+//!   to control-plane for full audit trail
+//! - **No cross-node aggregation**: Each sidecar maintains isolated local storage
+//! - **File permissions**: 0o600 for files, 0o700 for directories (Unix)
+//!
+//! For durable, queryable audit storage, use the control-plane audit vault.
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -16,7 +29,10 @@ use crate::models::ProofEvent;
 /// Default TTL for task identities (15 minutes)
 const DEFAULT_IDENTITY_TTL_SECONDS: i64 = 900;
 
-/// Default TTL for queue items (24 hours)
+/// Default TTL for queue items (24 hours).
+///
+/// Ephemeral by design: local logs auto-expire to encourage control-plane adoption
+/// for enterprise audit requirements.
 const DEFAULT_QUEUE_ITEM_TTL_SECONDS: i64 = 24 * 60 * 60;
 
 /// Task identity record
@@ -325,7 +341,11 @@ impl LocalIdentityRegistry {
         }
     }
 
-    /// List flush queue items
+    /// List queue items with optional payload redaction.
+    ///
+    /// By default, payloads are redacted to prevent local sidecar logs from
+    /// serving as a queryable audit trail. Full payloads are only accessible
+    /// via control-plane audit vault.
     pub fn list_flush_queue(
         &self,
         include_flushed: bool,
@@ -387,7 +407,13 @@ impl LocalIdentityRegistry {
         items
     }
 
-    /// Expire queue items older than TTL
+    /// Remove queue items older than queue_item_ttl_seconds.
+    ///
+    /// Ephemeral logging: local audit events auto-expire to discourage
+    /// reliance on sidecar logs for enterprise audit requirements.
+    /// Control-plane provides durable, queryable audit storage.
+    ///
+    /// Returns the count of expired (deleted) queue items.
     pub fn expire_queue_items(&self) -> usize {
         let now = Self::now_epoch();
         let cutoff = now - self.queue_item_ttl_seconds;
@@ -513,18 +539,53 @@ impl LocalIdentityRegistry {
         }
     }
 
-    fn redact_queue_item(mut item: LedgerQueueItem) -> LedgerQueueItem {
+    /// Redact sensitive payload fields from queue item.
+    ///
+    /// Preserves queue metadata (id, timestamps, status) but replaces
+    /// audit-relevant payload fields to discourage local log aggregation.
+    /// This matches the Python sidecar's `_redact_queue_item` behavior.
+    fn redact_queue_item(item: LedgerQueueItem) -> LedgerQueueItem {
         const REDACT_MARKER: &str = "[REDACTED - use control-plane for full audit]";
 
-        if let Some(payload) = item.payload.as_object_mut() {
+        let mut redacted_payload = serde_json::Map::new();
+
+        if let Some(payload) = item.payload.as_object() {
+            // Preserve only non-sensitive metadata (matches Python behavior)
+            if let Some(source) = payload.get("source") {
+                redacted_payload.insert("source".to_string(), source.clone());
+            }
+            if let Some(event_type) = payload.get("event_type") {
+                redacted_payload.insert("event_type".to_string(), event_type.clone());
+            }
+            if let Some(emitted_at) = payload.get("emitted_at_epoch_s") {
+                redacted_payload.insert("emitted_at_epoch_s".to_string(), emitted_at.clone());
+            }
+
+            // Redact audit-sensitive fields
             for field in &["principal_id", "action", "resource", "reason", "mandate_id"] {
                 if payload.contains_key(*field) {
-                    payload.insert(field.to_string(), serde_json::json!(REDACT_MARKER));
+                    redacted_payload.insert(field.to_string(), serde_json::json!(REDACT_MARKER));
                 }
+            }
+
+            // Preserve allowed/denied decision indicator only (matches Python)
+            if let Some(allowed) = payload.get("allowed") {
+                redacted_payload.insert("allowed".to_string(), allowed.clone());
             }
         }
 
-        item
+        LedgerQueueItem {
+            queue_item_id: item.queue_item_id,
+            enqueued_at_epoch_s: item.enqueued_at_epoch_s,
+            payload: serde_json::Value::Object(redacted_payload),
+            flushed: item.flushed,
+            flush_attempts: item.flush_attempts,
+            last_error: item.last_error,
+            flushed_at_epoch_s: item.flushed_at_epoch_s,
+            quarantined: item.quarantined,
+            quarantine_reason: item.quarantine_reason,
+            quarantined_at_epoch_s: item.quarantined_at_epoch_s,
+        }
     }
 }
 
@@ -733,11 +794,27 @@ mod tests {
         assert_eq!(redacted.len(), 1);
 
         let payload = redacted[0].payload.as_object().unwrap();
+
+        // Verify sensitive fields are redacted
         assert!(payload["principal_id"]
             .as_str()
             .unwrap()
             .contains("REDACTED"));
         assert!(payload["action"].as_str().unwrap().contains("REDACTED"));
         assert!(payload["resource"].as_str().unwrap().contains("REDACTED"));
+        assert!(payload["reason"].as_str().unwrap().contains("REDACTED"));
+        assert!(payload["mandate_id"].as_str().unwrap().contains("REDACTED"));
+
+        // Verify non-sensitive metadata is preserved (matches Python behavior)
+        assert_eq!(
+            payload["source"].as_str().unwrap(),
+            "predicate-authorityd"
+        );
+        assert_eq!(
+            payload["event_type"].as_str().unwrap(),
+            "authorization_allowed"
+        );
+        assert_eq!(payload["emitted_at_epoch_s"].as_i64().unwrap(), 1700000000);
+        assert_eq!(payload["allowed"].as_bool().unwrap(), true);
     }
 }
