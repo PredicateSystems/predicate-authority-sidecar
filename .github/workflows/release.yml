@@ -140,7 +140,7 @@ jobs:
             ./predicate-authorityd --port 8787
             ```
 
-            See the [README](https://github.com/anthropics/rust-predicate-authorityd#readme) for full documentation.
+            See the [README](https://github.com/PredicateSystems/predicate-authority-sidecar#readme) for full documentation.
 
   # Trigger SDK repos to update their bundled binaries
   trigger-sdk-releases:
