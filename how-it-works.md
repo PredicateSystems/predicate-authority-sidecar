@@ -1,46 +1,66 @@
 # How IdP + Sidecar + Mandates Work Together
 
-This document explains how the Predicate Authority sidecar integrates with Identity Providers (IdP) like Okta, how AI agents obtain authorization, and how mandates are issued.
+---
 
-## Overview
+## The Problem: Static Scopes Cannot Secure Non-Deterministic Agents
 
-The key insight is that the **sidecar does NOT issue or refresh IdP tokens**. Instead:
+When you connect an AI agent to an Identity Provider (IdP) like Okta or Entra, it receives an access token. That token is a **passport**—it proves the agent's identity and carries static scopes (like `database:write`) to get it through the front door of your API.
 
-1. **The AI agent obtains tokens from the IdP directly** (e.g., Okta)
-2. **The sidecar validates those tokens** before issuing mandates
-3. **Mandates are short-lived authorization tokens** that the agent uses for specific actions
+However, IdP scopes are broad and coarse-grained. If a prompt injection tricks your agent into calling `drop_database` instead of `update_record`, your API will execute the attack because the agent's token legitimately holds the `database:write` scope. The IdP cannot evaluate the context of the action.
+
+---
+
+## The Solution: The Per-Action Work Visa
+
+To stop rogue actions, agents need a **work visa**—a real-time, deterministic permission slip evaluated just milliseconds before a specific action executes.
+
+This is how Predicate Authority works:
+
+1. **The Passport:** The AI agent gets its standard token from your IdP (Okta/Entra).
+2. **The Border Check:** Before executing a tool, the agent shows its token to the local Predicate Sidecar.
+3. **The Visa (Mandate):** The sidecar validates the token, checks the deterministic policy, and if the action is safe, issues a cryptographic **Mandate** (the visa).
+4. **Execution:** The agent passes the Mandate to the backend API, which verifies it and executes the action.
+
+---
 
 ## Architecture Flow
 
 ```
-┌─────────────┐     ┌─────────┐     ┌──────────────────┐     ┌─────────┐
-│  AI Agent   │────▶│  Okta   │────▶│ predicate-authorityd │────▶│ Backend │
-│             │     │  (IdP)  │     │    (Sidecar)     │     │   API   │
-└─────────────┘     └─────────┘     └──────────────────┘     └─────────┘
-      │                  │                   │                    │
-      │ 1. Get access    │                   │                    │
-      │    token         │                   │                    │
-      │─────────────────▶│                   │                    │
-      │◀─────────────────│                   │                    │
-      │  access_token    │                   │                    │
-      │  (+ refresh_token)                   │                    │
-      │                                      │                    │
-      │ 2. Authorize action with token       │                    │
-      │─────────────────────────────────────▶│                    │
-      │    POST /v1/authorize                │                    │
-      │    Authorization: Bearer <token>     │                    │
-      │                                      │                    │
-      │                   3. Validate token  │                    │
-      │                      via JWKS        │                    │
-      │                                      │                    │
-      │◀─────────────────────────────────────│                    │
-      │  {allowed: true, mandate_id: "m_123"}│                    │
-      │                                      │                    │
-      │ 4. Call backend with mandate         │                    │
-      │─────────────────────────────────────────────────────────▶│
-      │    X-Predicate-Mandate: m_123        │                    │
-      │                                      │                    │
+┌─────────────┐     ┌─────────┐     ┌──────────────────────┐     ┌─────────┐
+│  AI Agent   │────▶│  Okta   │────▶│  predicate-authority │────▶│ Backend │
+│             │     │  (IdP)  │     │      (Sidecar)       │     │   API   │
+└─────────────┘     └─────────┘     └──────────────────────┘     └─────────┘
+      │                  │                     │                      │
+      │ 1. Get access    │                     │                      │
+      │    token         │                     │                      │
+      │─────────────────▶│                     │                      │
+      │◀─────────────────│                     │                      │
+      │  access_token    │                     │                      │
+      │  (The Passport)  │                     │                      │
+      │                                        │                      │
+      │ 2. Request to execute action           │                      │
+      │───────────────────────────────────────▶│                      │
+      │    POST /v1/authorize                  │                      │
+      │    Authorization: Bearer <token>       │                      │
+      │                                        │                      │
+      │                     3. Validate token  │                      │
+      │                        & Check Policy  │                      │
+      │                                        │                      │
+      │◀───────────────────────────────────────│                      │
+      │  {allowed: true, mandate_id: "m_123"}  │                      │
+      │  (The Visa)                            │                      │
+      │                                        │                      │
+      │ 4. Call backend with Mandate           │                      │
+      │───────────────────────────────────────────────────────────────▶│
+      │    X-Predicate-Mandate: m_123          │                      │
+      │                                        │                      │
 ```
+
+The key insight: **the sidecar does NOT issue or refresh IdP tokens**. Instead:
+
+1. **The AI agent obtains tokens from the IdP directly** (e.g., Okta)
+2. **The sidecar validates those tokens** before issuing mandates
+3. **Mandates are short-lived authorization tokens** that the agent uses for specific actions
 
 ---
 
