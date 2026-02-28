@@ -64,7 +64,9 @@ Watch authorization decisions in real-time with the built-in TUI:
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Keyboard: `j/k` scroll, `g/G` jump, `P` pause, `?` help, `Q` quit.
+**Keyboard:** `j/k` scroll, `f` filter (DENY/agent), `c` clear filter, `P` pause, `?` help, `Q` quit
+
+**Audit mode:** Use `--audit-mode` or `audit-only.json` policy to show `[ ⚠ WOULD DENY ]` in yellow instead of blocking.
 
 ---
 

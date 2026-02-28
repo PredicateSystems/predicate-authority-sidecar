@@ -22,6 +22,24 @@ use ratatui::{
 
 use crate::http::AppState;
 
+/// Filter mode for the event list
+#[derive(Debug, Clone, PartialEq)]
+pub enum FilterMode {
+    /// Show all events
+    All,
+    /// Show only DENY events
+    DenyOnly,
+    /// Filter by agent/principal ID (contains match)
+    ByAgent(String),
+}
+
+impl Default for FilterMode {
+    fn default() -> Self {
+        FilterMode::All
+    }
+}
+
+
 /// TUI application state
 pub struct TuiApp {
     /// Whether the app should quit
@@ -38,6 +56,12 @@ pub struct TuiApp {
     show_help: bool,
     /// Whether updates are paused
     paused: bool,
+    /// Current filter mode
+    filter_mode: FilterMode,
+    /// Whether we're in filter input mode (typing agent ID)
+    filter_input_mode: bool,
+    /// Buffer for filter input
+    filter_input_buffer: String,
 }
 
 impl TuiApp {
@@ -51,11 +75,49 @@ impl TuiApp {
             scroll_offset: 0,
             show_help: false,
             paused: false,
+            filter_mode: FilterMode::All,
+            filter_input_mode: false,
+            filter_input_buffer: String::new(),
         }
+    }
+
+    /// Check if audit mode is enabled
+    fn is_audit_mode(&self) -> bool {
+        self.app_state.policy_engine.is_audit_mode()
     }
 
     /// Handle keyboard input
     fn handle_key(&mut self, key: KeyCode) {
+        // Filter input mode takes priority
+        if self.filter_input_mode {
+            match key {
+                KeyCode::Enter => {
+                    // Apply the filter
+                    if self.filter_input_buffer.is_empty() {
+                        self.filter_mode = FilterMode::All;
+                    } else {
+                        self.filter_mode = FilterMode::ByAgent(self.filter_input_buffer.clone());
+                    }
+                    self.filter_input_mode = false;
+                    self.filter_input_buffer.clear();
+                    self.scroll_offset = 0;
+                }
+                KeyCode::Esc => {
+                    // Cancel filter input
+                    self.filter_input_mode = false;
+                    self.filter_input_buffer.clear();
+                }
+                KeyCode::Backspace => {
+                    self.filter_input_buffer.pop();
+                }
+                KeyCode::Char(c) => {
+                    self.filter_input_buffer.push(c);
+                }
+                _ => {}
+            }
+            return;
+        }
+
         // Help overlay takes priority
         if self.show_help {
             match key {
@@ -96,6 +158,35 @@ impl TuiApp {
             // Toggle pause
             KeyCode::Char('p') | KeyCode::Char('P') => {
                 self.paused = !self.paused;
+            }
+            // Filter: cycle through modes or enter input mode
+            KeyCode::Char('f') => {
+                // Cycle: All -> DenyOnly -> (input mode for agent)
+                match &self.filter_mode {
+                    FilterMode::All => {
+                        self.filter_mode = FilterMode::DenyOnly;
+                        self.scroll_offset = 0;
+                    }
+                    FilterMode::DenyOnly => {
+                        // Enter input mode to filter by agent
+                        self.filter_input_mode = true;
+                        self.filter_input_buffer.clear();
+                    }
+                    FilterMode::ByAgent(_) => {
+                        self.filter_mode = FilterMode::All;
+                        self.scroll_offset = 0;
+                    }
+                }
+            }
+            // Filter: direct agent input mode
+            KeyCode::Char('/') => {
+                self.filter_input_mode = true;
+                self.filter_input_buffer.clear();
+            }
+            // Clear filter
+            KeyCode::Char('c') | KeyCode::Char('C') => {
+                self.filter_mode = FilterMode::All;
+                self.scroll_offset = 0;
             }
             _ => {}
         }
@@ -179,38 +270,63 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &TuiApp) {
     // Get stats from app state
     let _stats = app.app_state.proof_ledger.stats();
     let rule_count = app.app_state.policy_engine.rule_count();
+    let is_audit = app.is_audit_mode();
 
     // Status indicator
     let (status_text, status_color) = if app.paused {
         ("PAUSED", Color::Yellow)
+    } else if is_audit {
+        ("AUDIT", Color::Yellow)
     } else {
         ("LIVE", Color::Green)
     };
 
+    // Mode indicator
+    let mode_text = if is_audit { "audit" } else { "strict" };
+    let mode_color = if is_audit { Color::Yellow } else { Color::Yellow };
+
+    // Filter indicator
+    let filter_spans: Vec<Span> = match &app.filter_mode {
+        FilterMode::All => vec![],
+        FilterMode::DenyOnly => vec![
+            Span::raw("  "),
+            Span::styled("FILTER: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("DENY", Style::default().fg(Color::Red)),
+        ],
+        FilterMode::ByAgent(agent) => vec![
+            Span::raw("  "),
+            Span::styled("FILTER: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(agent.clone(), Style::default().fg(Color::Cyan)),
+        ],
+    };
+
+    let mut first_line = vec![
+        Span::styled(
+            format!("  PREDICATE AUTHORITY v{}  ", version),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("      "),
+        Span::styled("MODE: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(mode_text, Style::default().fg(mode_color)),
+        Span::raw("  "),
+        Span::styled(
+            format!("[{}]", status_text),
+            Style::default()
+                .fg(status_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled("UPTIME: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(uptime, Style::default().fg(Color::Green)),
+    ];
+    first_line.extend(filter_spans);
+    first_line.push(Span::raw("  "));
+    first_line.push(Span::styled("[?:help]", Style::default().fg(Color::DarkGray)));
+
     let header_text = vec![
-        Line::from(vec![
-            Span::styled(
-                format!("  PREDICATE AUTHORITY v{}  ", version),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("      "),
-            Span::styled("MODE: ", Style::default().fg(Color::DarkGray)),
-            Span::styled("strict", Style::default().fg(Color::Yellow)),
-            Span::raw("  "),
-            Span::styled(
-                format!("[{}]", status_text),
-                Style::default()
-                    .fg(status_color)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("  "),
-            Span::styled("UPTIME: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(uptime, Style::default().fg(Color::Green)),
-            Span::raw("  "),
-            Span::styled("[?:help]", Style::default().fg(Color::DarkGray)),
-        ]),
+        Line::from(first_line),
         Line::from(vec![
             Span::styled("  Policy: ", Style::default().fg(Color::DarkGray)),
             Span::styled("loaded", Style::default().fg(Color::Green)),
@@ -222,7 +338,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &TuiApp) {
             ),
             Span::raw("      "),
             Span::styled(
-                "[Q:quit P:pause j/k:scroll]",
+                "[Q:quit P:pause f:filter j/k:scroll]",
                 Style::default().fg(Color::DarkGray),
             ),
         ]),
@@ -242,18 +358,57 @@ fn draw_authority_gate(frame: &mut Frame, area: Rect, app: &TuiApp) {
     // Get recent events from the ledger (get more to allow scrolling)
     let recent_events = app.app_state.proof_ledger.recent_events(100);
 
+    // Apply filter
+    let filtered_events: Vec<_> = recent_events
+        .iter()
+        .filter(|event| match &app.filter_mode {
+            FilterMode::All => true,
+            FilterMode::DenyOnly => !event.allowed,
+            FilterMode::ByAgent(agent) => {
+                event.principal_id.to_lowercase().contains(&agent.to_lowercase())
+            }
+        })
+        .collect();
+
+    let is_audit = app.is_audit_mode();
     let mut lines: Vec<Line> = Vec::new();
 
-    if recent_events.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "  Waiting for authorization requests...",
-            Style::default().fg(Color::DarkGray),
-        )));
+    // Show filter input bar if in input mode
+    if app.filter_input_mode {
+        lines.push(Line::from(vec![
+            Span::styled("  Filter: ", Style::default().fg(Color::Yellow)),
+            Span::styled(
+                format!("{}_", app.filter_input_buffer),
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" (Enter to apply, Esc to cancel)", Style::default().fg(Color::DarkGray)),
+        ]));
+        lines.push(Line::from(""));
+    }
+
+    if filtered_events.is_empty() {
+        let msg = match &app.filter_mode {
+            FilterMode::All => "  Waiting for authorization requests...",
+            FilterMode::DenyOnly => "  No DENY events to display (filter: DENY only)",
+            FilterMode::ByAgent(agent) => {
+                lines.push(Line::from(Span::styled(
+                    format!("  No events matching agent '{}' (press c to clear)", agent),
+                    Style::default().fg(Color::DarkGray),
+                )));
+                ""
+            }
+        };
+        if !msg.is_empty() {
+            lines.push(Line::from(Span::styled(
+                msg,
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
     } else {
         // Apply scroll offset and limit to visible area
         let visible_count = (area.height.saturating_sub(2) / 4) as usize; // 4 lines per event
-        let scroll = app.scroll_offset.min(recent_events.len().saturating_sub(1));
-        let visible_events = recent_events.iter().skip(scroll).take(visible_count);
+        let scroll = app.scroll_offset.min(filtered_events.len().saturating_sub(1));
+        let visible_events = filtered_events.iter().skip(scroll).take(visible_count);
 
         for event in visible_events {
             let (status, status_style) = if event.allowed {
@@ -261,6 +416,14 @@ fn draw_authority_gate(frame: &mut Frame, area: Rect, app: &TuiApp) {
                     "[ \u{2713} ALLOW ]",
                     Style::default()
                         .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else if is_audit {
+                // Audit mode: show WOULD DENY in yellow
+                (
+                    "[ \u{26A0} WOULD DENY ]",
+                    Style::default()
+                        .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
                 )
             } else {
@@ -319,27 +482,40 @@ fn draw_authority_gate(frame: &mut Frame, area: Rect, app: &TuiApp) {
         }
     }
 
-    // Show scroll indicator in title if scrolled
-    let title = if app.scroll_offset > 0 {
+    // Build title with filter indicator and scroll position
+    let filter_indicator = match &app.filter_mode {
+        FilterMode::All => String::new(),
+        FilterMode::DenyOnly => " [DENY]".to_string(),
+        FilterMode::ByAgent(agent) => format!(" [{}]", agent),
+    };
+
+    let audit_indicator = if is_audit { " AUDIT" } else { "" };
+
+    let title = if app.scroll_offset > 0 || !filtered_events.is_empty() {
         format!(
-            " LIVE AUTHORITY GATE [{}/{}] ",
+            " LIVE AUTHORITY GATE{}{} [{}/{}] ",
+            audit_indicator,
+            filter_indicator,
             app.scroll_offset + 1,
-            recent_events.len()
+            filtered_events.len()
         )
     } else {
-        " LIVE AUTHORITY GATE ".to_string()
+        format!(" LIVE AUTHORITY GATE{}{} ", audit_indicator, filter_indicator)
     };
+
+    // Use yellow border for audit mode
+    let border_color = if is_audit { Color::Yellow } else { Color::DarkGray };
 
     let gate = Paragraph::new(lines).block(
         Block::default()
             .title(Span::styled(
                 title,
                 Style::default()
-                    .fg(Color::White)
+                    .fg(if is_audit { Color::Yellow } else { Color::White })
                     .add_modifier(Modifier::BOLD),
             ))
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray)),
+            .border_style(Style::default().fg(border_color)),
     );
 
     frame.render_widget(gate, area);
@@ -503,8 +679,8 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &TuiApp) {
 /// Draw the help overlay modal
 fn draw_help_overlay(frame: &mut Frame, area: Rect) {
     // Center the help box
-    let help_width = 50;
-    let help_height = 14;
+    let help_width = 54;
+    let help_height = 20;
     let x = (area.width.saturating_sub(help_width)) / 2;
     let y = (area.height.saturating_sub(help_height)) / 2;
     let help_area = Rect::new(x, y, help_width, help_height);
@@ -549,6 +725,25 @@ fn draw_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from(vec![
             Span::styled("  ?          ", Style::default().fg(Color::Yellow)),
             Span::styled("Toggle this help", Style::default().fg(Color::White)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  FILTERING",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(vec![
+            Span::styled("  f          ", Style::default().fg(Color::Yellow)),
+            Span::styled("Cycle filter: ALL -> DENY -> agent", Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled("  /          ", Style::default().fg(Color::Yellow)),
+            Span::styled("Filter by agent ID (type + Enter)", Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled("  c          ", Style::default().fg(Color::Yellow)),
+            Span::styled("Clear filter (show all)", Style::default().fg(Color::White)),
         ]),
         Line::from(""),
         Line::from(Span::styled(

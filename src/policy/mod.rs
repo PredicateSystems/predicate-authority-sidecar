@@ -29,6 +29,8 @@ pub struct PolicyMatchResult {
 /// Thread-safe policy engine
 pub struct PolicyEngine {
     rules: Arc<RwLock<Vec<PolicyRule>>>,
+    /// Whether the engine is running in audit/dry-run mode (log but don't block)
+    audit_mode: Arc<RwLock<bool>>,
 }
 
 impl PolicyEngine {
@@ -36,6 +38,7 @@ impl PolicyEngine {
     pub fn new() -> Self {
         Self {
             rules: Arc::new(RwLock::new(Vec::new())),
+            audit_mode: Arc::new(RwLock::new(false)),
         }
     }
 
@@ -43,7 +46,18 @@ impl PolicyEngine {
     pub fn with_rules(rules: Vec<PolicyRule>) -> Self {
         Self {
             rules: Arc::new(RwLock::new(rules)),
+            audit_mode: Arc::new(RwLock::new(false)),
         }
+    }
+
+    /// Enable or disable audit mode
+    pub fn set_audit_mode(&self, enabled: bool) {
+        *self.audit_mode.write() = enabled;
+    }
+
+    /// Check if audit mode is enabled
+    pub fn is_audit_mode(&self) -> bool {
+        *self.audit_mode.read()
     }
 
     /// Replace all rules (thread-safe)

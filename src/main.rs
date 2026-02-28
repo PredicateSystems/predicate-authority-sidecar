@@ -52,6 +52,10 @@ struct Cli {
     #[arg(long, env = "PREDICATE_POLICY_FILE")]
     policy_file: Option<String>,
 
+    /// Enable audit/dry-run mode (log decisions but don't actually block)
+    #[arg(long, env = "PREDICATE_AUDIT_MODE")]
+    audit_mode: bool,
+
     /// Path to local identity registry JSON file
     #[arg(long, env = "PREDICATE_IDENTITY_FILE")]
     identity_file: Option<String>,
@@ -466,11 +470,24 @@ async fn main() -> anyhow::Result<()> {
                 } else {
                     info!("Loaded {} policy rules", count);
                 }
+
+                // Detect audit mode from policy file name
+                let path_lower = policy_path.to_lowercase();
+                if path_lower.contains("audit") || path_lower.contains("dry-run") || path_lower.contains("dryrun") {
+                    policy_engine.set_audit_mode(true);
+                    info!("Audit mode enabled (detected from policy filename)");
+                }
             }
             Err(e) => {
                 warn!("Failed to load policy file: {}", e);
             }
         }
+    }
+
+    // Enable audit mode if explicitly requested via CLI
+    if cli.audit_mode {
+        policy_engine.set_audit_mode(true);
+        info!("Audit mode enabled via --audit-mode flag");
     }
 
     // Create application state

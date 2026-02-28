@@ -655,6 +655,46 @@ export PREDICATE_TUI_REFRESH_MS=50
 | `G` | Jump to oldest event |
 | `P` | Pause/resume live updates |
 | `?` | Toggle help overlay |
+| `f` | Cycle filter: ALL → DENY → agent input |
+| `/` | Filter by agent ID (type + Enter) |
+| `c` | Clear filter (show all) |
+
+### Live Filtering
+
+When an agent is running a heavy web loop, the LIVE AUTHORITY GATE can be spammed with hundreds of `[ ✓ ALLOW ]` events. Use filtering to focus on what matters:
+
+**Filter to DENY only:**
+Press `f` once to show only blocked events.
+
+**Filter by agent:**
+Press `f` twice (or `/`) to enter agent filter mode. Type an agent ID (e.g., `web`) and press Enter. Events are filtered by partial match on the principal.
+
+**Clear filter:**
+Press `c` to return to showing all events.
+
+The current filter is displayed in the header and title:
+```
+  PREDICATE AUTHORITY v0.4.1    MODE: strict  [LIVE]  FILTER: DENY
+```
+
+### Audit Mode
+
+When running with the audit-only policy (or `--audit-mode` flag), the dashboard shows a visual distinction for blocked events:
+
+```bash
+# Enable audit mode explicitly
+./predicate-authorityd --audit-mode --policy-file policy.json dashboard
+
+# Or use audit-only policy (auto-detected from filename)
+./predicate-authorityd --policy-file policies/audit-only.json dashboard
+```
+
+In audit mode:
+- The header shows `[AUDIT]` instead of `[LIVE]`
+- Blocked events display `[ ⚠ WOULD DENY ]` in yellow instead of `[ ✗ DENY ]` in red
+- The LIVE AUTHORITY GATE border turns yellow
+
+This makes it visually obvious that the sidecar is logging decisions but not actually blocking the agent.
 
 ### Session Summary
 
