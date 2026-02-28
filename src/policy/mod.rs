@@ -116,64 +116,52 @@ impl PolicyEngine {
 
         let rules = self.rules.read();
 
-        // Find all matching rules
-        let matching_rules: Vec<&PolicyRule> = rules
-            .iter()
-            .filter(|rule| self.matches_rule(rule, request))
-            .collect();
-
-        if matching_rules.is_empty() {
-            return PolicyMatchResult {
-                allowed: false,
-                reason: AuthorizationReason::NoMatchingPolicy,
-                matched_rule: None,
-                missing_labels: vec![],
-            };
-        }
-
-        // Check for explicit DENY first (fail-fast)
-        for rule in &matching_rules {
-            if rule.effect == PolicyEffect::Deny {
-                return PolicyMatchResult {
-                    allowed: false,
-                    reason: AuthorizationReason::ExplicitDeny,
-                    matched_rule: Some(rule.name.clone()),
-                    missing_labels: vec![],
-                };
+        // First-match-wins evaluation: process rules in order, return on first match.
+        // This allows policies to have specific ALLOW rules before a catch-all DENY.
+        for rule in rules.iter() {
+            if !self.matches_rule(rule, request) {
+                continue;
             }
-        }
 
-        // Check ALLOW rules
-        for rule in &matching_rules {
-            if rule.effect == PolicyEffect::Allow {
-                // Check required verification labels
-                let missing: Vec<String> = rule
-                    .required_labels
-                    .iter()
-                    .filter(|label| !passed_labels.contains(label))
-                    .cloned()
-                    .collect();
-
-                if !missing.is_empty() {
+            match rule.effect {
+                PolicyEffect::Deny => {
                     return PolicyMatchResult {
                         allowed: false,
-                        reason: AuthorizationReason::MissingRequiredVerification,
+                        reason: AuthorizationReason::ExplicitDeny,
                         matched_rule: Some(rule.name.clone()),
-                        missing_labels: missing,
+                        missing_labels: vec![],
                     };
                 }
+                PolicyEffect::Allow => {
+                    // Check required verification labels
+                    let missing: Vec<String> = rule
+                        .required_labels
+                        .iter()
+                        .filter(|label| !passed_labels.contains(label))
+                        .cloned()
+                        .collect();
 
-                // All checks passed
-                return PolicyMatchResult {
-                    allowed: true,
-                    reason: AuthorizationReason::Allowed,
-                    matched_rule: Some(rule.name.clone()),
-                    missing_labels: vec![],
-                };
+                    if !missing.is_empty() {
+                        return PolicyMatchResult {
+                            allowed: false,
+                            reason: AuthorizationReason::MissingRequiredVerification,
+                            matched_rule: Some(rule.name.clone()),
+                            missing_labels: missing,
+                        };
+                    }
+
+                    // All checks passed
+                    return PolicyMatchResult {
+                        allowed: true,
+                        reason: AuthorizationReason::Allowed,
+                        matched_rule: Some(rule.name.clone()),
+                        missing_labels: vec![],
+                    };
+                }
             }
         }
 
-        // No ALLOW rule matched (shouldn't reach here if rules exist)
+        // No rule matched - implicit deny
         PolicyMatchResult {
             allowed: false,
             reason: AuthorizationReason::NoMatchingPolicy,
@@ -301,9 +289,10 @@ mod tests {
     }
 
     #[test]
-    fn test_deny_rule_takes_precedence() {
+    #[test]
+    fn test_first_match_wins_deny() {
+        // With first-match-wins, place DENY rules before ALLOW rules for deny-overrides behavior
         let engine = PolicyEngine::with_rules(vec![
-            sample_allow_rule(),
             PolicyRule {
                 name: "deny-checkout".to_string(),
                 effect: PolicyEffect::Deny,
@@ -313,12 +302,35 @@ mod tests {
                 required_labels: vec![],
                 max_delegation_depth: None,
             },
+            sample_allow_rule(),
         ]);
 
         let result = engine.evaluate(&sample_request());
 
         assert!(!result.allowed);
         assert_eq!(result.reason, AuthorizationReason::ExplicitDeny);
+    }
+
+    #[test]
+    fn test_first_match_wins_allow() {
+        // When ALLOW rule comes first and matches, it takes precedence
+        let engine = PolicyEngine::with_rules(vec![
+            sample_allow_rule(),
+            PolicyRule {
+                name: "deny-all".to_string(),
+                effect: PolicyEffect::Deny,
+                principals: vec!["*".to_string()],
+                actions: vec!["*".to_string()],
+                resources: vec!["*".to_string()],
+                required_labels: vec![],
+                max_delegation_depth: None,
+            },
+        ]);
+
+        let result = engine.evaluate(&sample_request());
+
+        assert!(result.allowed);
+        assert_eq!(result.reason, AuthorizationReason::Allowed);
     }
 
     #[test]
@@ -492,5 +504,24 @@ mod tests {
 
         let result = engine.evaluate(&request);
         assert!(result.allowed); // Would be blocked if SSRF was enabled
+    }
+}
+
+#[cfg(test)]
+mod pattern_tests {
+    use super::matches_pattern;
+    
+    #[test]
+    fn test_agent_colon_star() {
+        // This is the critical pattern from policy files
+        assert!(matches_pattern("agent:*", "agent:test"), "agent:* should match agent:test");
+        assert!(matches_pattern("agent:*", "agent:secureclaw"), "agent:* should match agent:secureclaw");
+    }
+    
+    #[test]
+    fn test_star_matches_all() {
+        assert!(matches_pattern("*", "/src/index.ts"), "* should match /src/index.ts");
+        assert!(matches_pattern("*", "agent:test"), "* should match agent:test");
+        assert!(matches_pattern("*", "fs.read"), "* should match fs.read");
     }
 }
