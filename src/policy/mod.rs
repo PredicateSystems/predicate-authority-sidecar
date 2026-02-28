@@ -412,10 +412,7 @@ mod tests {
         let result = engine.evaluate(&request);
         assert!(!result.allowed);
         assert_eq!(result.reason, AuthorizationReason::ExplicitDeny);
-        assert!(result
-            .matched_rule
-            .unwrap()
-            .contains("ssrf-protection"));
+        assert!(result.matched_rule.unwrap().contains("ssrf-protection"));
     }
 
     #[test]
@@ -441,10 +438,7 @@ mod tests {
 
         let result = engine.evaluate(&request);
         assert!(!result.allowed);
-        assert!(result
-            .matched_rule
-            .unwrap()
-            .contains("metadata"));
+        assert!(result.matched_rule.unwrap().contains("metadata"));
     }
 
     #[test]

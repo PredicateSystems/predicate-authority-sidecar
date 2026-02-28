@@ -199,18 +199,17 @@ impl SsrfProtection {
         }
 
         // Internal DNS suffixes
-        if self.block_internal_dns {
-            if host.ends_with(".internal")
+        if self.block_internal_dns
+            && (host.ends_with(".internal")
                 || host.ends_with(".local")
                 || host.ends_with(".localhost")
                 || host.ends_with(".localdomain")
                 || host.ends_with(".home")
                 || host.ends_with(".lan")
                 || host.ends_with(".corp")
-                || host.ends_with(".intranet")
-            {
-                return Some(format!("SSRF: internal DNS suffix blocked ({})", host));
-            }
+                || host.ends_with(".intranet"))
+        {
+            return Some(format!("SSRF: internal DNS suffix blocked ({})", host));
         }
 
         // Additional blocked patterns
@@ -354,18 +353,10 @@ mod tests {
     fn test_block_internal_dns() {
         let ssrf = SsrfProtection::default();
 
-        assert!(ssrf
-            .check_resource("http://db.internal/connect")
-            .is_some());
-        assert!(ssrf
-            .check_resource("http://api-server.local/")
-            .is_some());
-        assert!(ssrf
-            .check_resource("http://secret.corp/admin")
-            .is_some());
-        assert!(ssrf
-            .check_resource("http://service.intranet/")
-            .is_some());
+        assert!(ssrf.check_resource("http://db.internal/connect").is_some());
+        assert!(ssrf.check_resource("http://api-server.local/").is_some());
+        assert!(ssrf.check_resource("http://secret.corp/admin").is_some());
+        assert!(ssrf.check_resource("http://service.intranet/").is_some());
     }
 
     #[test]

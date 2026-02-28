@@ -117,11 +117,11 @@ pub fn parse_signed_policy(content: &str) -> Result<SignedPolicy, PolicySignatur
     let value: serde_json::Value = serde_json::from_str(content)?;
 
     // Check if this looks like a signed policy (has "policy" and "signature" fields)
-    if !value.get("signature").is_some() {
+    if value.get("signature").is_none() {
         return Err(PolicySignatureError::MissingSignature);
     }
 
-    if !value.get("policy").is_some() {
+    if value.get("policy").is_none() {
         return Err(PolicySignatureError::MissingPolicyContent);
     }
 
@@ -212,7 +212,10 @@ mod tests {
 
         // Verification should fail with wrong key
         let result = verify_policy_signature(&signed, &wrong_key);
-        assert!(matches!(result, Err(PolicySignatureError::VerificationFailed)));
+        assert!(matches!(
+            result,
+            Err(PolicySignatureError::VerificationFailed)
+        ));
     }
 
     #[test]
@@ -229,7 +232,10 @@ mod tests {
 
         // Verification should fail
         let result = verify_policy_signature(&signed, &verifying_key);
-        assert!(matches!(result, Err(PolicySignatureError::VerificationFailed)));
+        assert!(matches!(
+            result,
+            Err(PolicySignatureError::VerificationFailed)
+        ));
     }
 
     #[test]
@@ -283,10 +289,16 @@ mod tests {
     fn test_parse_invalid_public_key() {
         // Too short
         let result = parse_public_key_hex("abcd");
-        assert!(matches!(result, Err(PolicySignatureError::InvalidPublicKey(_))));
+        assert!(matches!(
+            result,
+            Err(PolicySignatureError::InvalidPublicKey(_))
+        ));
 
         // Invalid hex
         let result = parse_public_key_hex("xyz123");
-        assert!(matches!(result, Err(PolicySignatureError::InvalidPublicKey(_))));
+        assert!(matches!(
+            result,
+            Err(PolicySignatureError::InvalidPublicKey(_))
+        ));
     }
 }

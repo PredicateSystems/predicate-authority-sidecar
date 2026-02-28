@@ -33,7 +33,10 @@ fn compute_chain_hash(prev_hash: &str, event_json: &str) -> String {
 
 /// Generate a unique event ID using UUID v4
 fn generate_event_id() -> String {
-    format!("evt_{}", uuid::Uuid::new_v4().to_string().replace("-", "")[..16].to_string())
+    format!(
+        "evt_{}",
+        &uuid::Uuid::new_v4().to_string().replace('-', "")[..16]
+    )
 }
 
 /// Statistics about authorization decisions
@@ -137,8 +140,8 @@ impl InMemoryProofLedger {
             };
 
             // Serialize to canonical JSON (sorted keys)
-            let event_json = serde_json::to_string(&canonical_event)
-                .unwrap_or_else(|_| "{}".to_string());
+            let event_json =
+                serde_json::to_string(&canonical_event).unwrap_or_else(|_| "{}".to_string());
 
             compute_chain_hash(&prev_hash, &event_json)
         };
@@ -233,8 +236,8 @@ impl InMemoryProofLedger {
             mandate_id,
             emitted_at_epoch_s: chrono::Utc::now().timestamp(),
             latency_us,
-            event_id: None,    // Will be generated in record()
-            chain_hash: None,  // Will be computed in record()
+            event_id: None,   // Will be generated in record()
+            chain_hash: None, // Will be computed in record()
         };
         self.record(event);
     }
@@ -295,8 +298,8 @@ impl InMemoryProofLedger {
                 chain_hash: None,
             };
 
-            let event_json = serde_json::to_string(&canonical_event)
-                .unwrap_or_else(|_| "{}".to_string());
+            let event_json =
+                serde_json::to_string(&canonical_event).unwrap_or_else(|_| "{}".to_string());
 
             let expected_hash = compute_chain_hash(&prev_hash, &event_json);
 

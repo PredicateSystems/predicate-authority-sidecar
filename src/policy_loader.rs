@@ -122,21 +122,12 @@ pub fn load_policy_from_string(
 }
 
 /// Configuration for policy signature verification
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SignatureVerificationConfig {
     /// If true, reject unsigned policies
     pub require_signature: bool,
     /// Public key for verifying signatures (required if require_signature is true)
     pub public_key: Option<VerifyingKey>,
-}
-
-impl Default for SignatureVerificationConfig {
-    fn default() -> Self {
-        Self {
-            require_signature: false,
-            public_key: None,
-        }
-    }
 }
 
 /// Load a policy file with optional signature verification.

@@ -113,7 +113,11 @@ impl LoopGuard {
     }
 
     /// Create a loop guard with specific parameters
-    pub fn with_params(max_entries: usize, failure_threshold: u32, failure_window: Duration) -> Self {
+    pub fn with_params(
+        max_entries: usize,
+        failure_threshold: u32,
+        failure_window: Duration,
+    ) -> Self {
         Self::with_config(LoopGuardConfig {
             max_entries,
             failure_threshold,
@@ -154,8 +158,7 @@ impl LoopGuard {
             // Check if threshold exceeded
             if entry.count >= self.config.failure_threshold {
                 // Check if we're still in the cooldown period
-                let cooldown_expired =
-                    entry.last_failure.elapsed() > self.config.cooldown_period;
+                let cooldown_expired = entry.last_failure.elapsed() > self.config.cooldown_period;
                 return !cooldown_expired;
             }
         }
