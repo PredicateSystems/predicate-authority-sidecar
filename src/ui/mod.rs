@@ -201,7 +201,9 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &TuiApp) {
             Span::raw("  "),
             Span::styled(
                 format!("[{}]", status_text),
-                Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(status_color)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::raw("  "),
             Span::styled("UPTIME: ", Style::default().fg(Color::DarkGray)),
@@ -219,7 +221,10 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &TuiApp) {
                 Style::default().fg(Color::White),
             ),
             Span::raw("      "),
-            Span::styled("[Q:quit P:pause j/k:scroll]", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                "[Q:quit P:pause j/k:scroll]",
+                Style::default().fg(Color::DarkGray),
+            ),
         ]),
     ];
 
@@ -261,9 +266,7 @@ fn draw_authority_gate(frame: &mut Frame, area: Rect, app: &TuiApp) {
             } else {
                 (
                     "[ \u{2717} DENY  ]",
-                    Style::default()
-                        .fg(Color::Red)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                 )
             };
 
@@ -318,7 +321,11 @@ fn draw_authority_gate(frame: &mut Frame, area: Rect, app: &TuiApp) {
 
     // Show scroll indicator in title if scrolled
     let title = if app.scroll_offset > 0 {
-        format!(" LIVE AUTHORITY GATE [{}/{}] ", app.scroll_offset + 1, recent_events.len())
+        format!(
+            " LIVE AUTHORITY GATE [{}/{}] ",
+            app.scroll_offset + 1,
+            recent_events.len()
+        )
     } else {
         " LIVE AUTHORITY GATE ".to_string()
     };

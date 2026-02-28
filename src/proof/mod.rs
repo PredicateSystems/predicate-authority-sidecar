@@ -77,12 +77,10 @@ impl InMemoryProofLedger {
             if let Some(latency) = event.latency_us {
                 stats.total_latency_us += latency;
                 stats.latency_count += 1;
-                stats.min_latency_us = Some(
-                    stats.min_latency_us.map_or(latency, |min| min.min(latency)),
-                );
-                stats.max_latency_us = Some(
-                    stats.max_latency_us.map_or(latency, |max| max.max(latency)),
-                );
+                stats.min_latency_us =
+                    Some(stats.min_latency_us.map_or(latency, |min| min.min(latency)));
+                stats.max_latency_us =
+                    Some(stats.max_latency_us.map_or(latency, |max| max.max(latency)));
             }
         }
 
