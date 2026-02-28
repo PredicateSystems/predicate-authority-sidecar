@@ -49,8 +49,12 @@ cargo build --release
 # Run with default settings
 ./predicate-authorityd run
 
-# Run with custom port and policy file
-./predicate-authorityd run --port 8787 --policy-file policy.json
+# Run with a bundled policy template (recommended)
+./predicate-authorityd --policy-file policies/strict.json run
+
+# Or use environment variable
+export PREDICATE_POLICY_FILE=policies/strict.json
+./predicate-authorityd run
 ```
 
 ## Commands
@@ -72,7 +76,7 @@ GLOBAL OPTIONS (use before 'run'):
       --host <HOST>             Host to bind to [env: PREDICATE_HOST] [default: 127.0.0.1]
       --port <PORT>             Port to bind to [env: PREDICATE_PORT] [default: 8787]
       --mode <MODE>             local_only or cloud_connected [env: PREDICATE_MODE]
-      --policy-file <PATH>      Path to policy JSON [env: PREDICATE_POLICY_FILE]
+      --policy-file <PATH>      Path to policy file (JSON or YAML) [env: PREDICATE_POLICY_FILE]
       --identity-file <PATH>    Path to local identity registry [env: PREDICATE_IDENTITY_FILE]
       --log-level <LEVEL>       trace, debug, info, warn, error [env: PREDICATE_LOG_LEVEL]
       --control-plane-url <URL> Control-plane URL [env: PREDICATE_CONTROL_PLANE_URL]
@@ -223,7 +227,28 @@ Response:
 }
 ```
 
-## Policy Format
+## Policy Templates
+
+The `policies/` directory contains ready-to-use policy templates. See [policies/README.md](policies/README.md) for full documentation.
+
+| Policy | Use Case | Description |
+|--------|----------|-------------|
+| **[strict.json](policies/strict.json)** | Production | Workspace isolation, safe commands, HTTPS only |
+| **[read-only.json](policies/read-only.json)** | Code review | Read-only filesystem and network access |
+| **[strict-web-only.json](policies/strict-web-only.json)** | Browser automation | No filesystem/shell, HTTPS browser only |
+| **[ci-cd.json](policies/ci-cd.json)** | CI/CD pipelines | Build/test commands, no network |
+| **[data-analysis.json](policies/data-analysis.json)** | Data science | Read data files, analysis tools |
+| **[permissive.json](policies/permissive.json)** | Development | Minimal restrictions |
+| **[audit-only.json](policies/audit-only.json)** | Profiling | Log all actions (requires audit_enabled label) |
+| **[minimal.json](policies/minimal.json)** | Starting point | Browser HTTPS only |
+
+### Supported Formats
+
+Policy files support both **JSON** and **YAML** formats. Format is auto-detected by file extension:
+- `.json` - JSON format
+- `.yaml` or `.yml` - YAML format
+
+### Policy Schema
 
 ```json
 {
@@ -259,12 +284,19 @@ Response:
 - `allow` - Permit the action
 - `deny` - Explicitly deny (takes precedence over allow)
 
+### Evaluation Order
+
+1. **DENY rules checked first** - Any matching DENY immediately blocks
+2. **ALLOW rules checked** - Must match AND have all required_labels
+3. **Default DENY** - If no rules match, action is blocked (fail-closed)
+
 ### Pattern Matching
 
 Patterns support shell-style wildcards:
 - `*` matches any sequence of characters
 - `agent:*` matches any agent principal
 - `browser.*` matches any browser action
+- `https://*` matches any HTTPS URL
 
 ## Operating Modes
 

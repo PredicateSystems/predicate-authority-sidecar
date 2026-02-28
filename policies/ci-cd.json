@@ -1,0 +1,147 @@
+{
+  "rules": [
+    {
+      "name": "block-network-access",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["http.*", "fetch", "browser.*"],
+      "resources": ["*"]
+    },
+    {
+      "name": "block-sensitive-files",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["fs.read", "fs.write", "file.*", "read", "write"],
+      "resources": [
+        "*/.ssh/*",
+        "*/.aws/*",
+        "*/.azure/*",
+        "*/.config/gcloud/*",
+        "*/.kube/*",
+        "*/.npmrc",
+        "*/.pypirc",
+        "/etc/passwd",
+        "/etc/shadow"
+      ]
+    },
+    {
+      "name": "block-dangerous-commands",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["shell.exec", "bash", "exec", "run"],
+      "resources": [
+        "rm -rf /*",
+        "rm -rf /",
+        "sudo *",
+        "su *",
+        "chmod 777*",
+        "curl * | bash*",
+        "wget * | sh*"
+      ]
+    },
+    {
+      "name": "allow-workspace-read",
+      "effect": "allow",
+      "principals": ["agent:*"],
+      "actions": ["fs.read", "fs.list", "fs.stat", "fs.exists", "fs.glob", "file.read", "read", "glob", "grep"],
+      "resources": ["*"]
+    },
+    {
+      "name": "allow-workspace-write",
+      "effect": "allow",
+      "principals": ["agent:*"],
+      "actions": ["fs.write", "fs.create", "fs.mkdir", "file.write", "write", "edit"],
+      "resources": [
+        "./*",
+        "src/*",
+        "lib/*",
+        "test/*",
+        "tests/*",
+        "dist/*",
+        "build/*",
+        "target/*",
+        "node_modules/*",
+        "coverage/*",
+        "*.log",
+        "*.tmp"
+      ]
+    },
+    {
+      "name": "allow-build-commands",
+      "effect": "allow",
+      "principals": ["agent:*"],
+      "actions": ["shell.exec", "bash", "exec", "run"],
+      "resources": [
+        "npm *",
+        "npx *",
+        "pnpm *",
+        "yarn *",
+        "bun *",
+        "node *",
+        "python *",
+        "python3 *",
+        "pip *",
+        "pip3 *",
+        "poetry *",
+        "cargo *",
+        "rustc *",
+        "go *",
+        "make *",
+        "cmake *",
+        "gradle *",
+        "mvn *",
+        "dotnet *",
+        "git *",
+        "cat *",
+        "head *",
+        "tail *",
+        "ls *",
+        "ls",
+        "find *",
+        "grep *",
+        "rg *",
+        "wc *",
+        "sort *",
+        "diff *",
+        "pwd",
+        "whoami",
+        "env",
+        "echo *",
+        "mkdir *",
+        "cp *",
+        "mv *",
+        "rm *.log",
+        "rm *.tmp",
+        "rm -rf node_modules*",
+        "rm -rf dist*",
+        "rm -rf build*",
+        "rm -rf target*",
+        "rm -rf coverage*"
+      ]
+    },
+    {
+      "name": "allow-test-commands",
+      "effect": "allow",
+      "principals": ["agent:*"],
+      "actions": ["shell.exec", "bash", "exec", "run"],
+      "resources": [
+        "jest *",
+        "mocha *",
+        "vitest *",
+        "pytest *",
+        "cargo test*",
+        "go test*",
+        "dotnet test*",
+        "mvn test*",
+        "gradle test*"
+      ]
+    },
+    {
+      "name": "default-deny",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["*"],
+      "resources": ["*"]
+    }
+  ]
+}

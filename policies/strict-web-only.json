@@ -1,0 +1,137 @@
+{
+  "rules": [
+    {
+      "name": "block-all-filesystem-read",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["fs.read", "fs.read_file", "fs.list", "fs.stat", "fs.exists", "file.read", "read"],
+      "resources": ["*"]
+    },
+    {
+      "name": "block-all-filesystem-write",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["fs.write", "fs.write_file", "fs.create", "fs.delete", "fs.remove", "fs.mkdir", "fs.rmdir", "fs.rename", "fs.copy", "fs.move", "file.write", "write", "edit"],
+      "resources": ["*"]
+    },
+    {
+      "name": "block-all-system-execution",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["os.exec", "os.spawn", "os.run", "shell.exec", "shell.run", "bash", "bash.exec", "process.spawn", "process.exec", "system.run", "system.exec", "exec", "run"],
+      "resources": ["*"]
+    },
+    {
+      "name": "block-insecure-http",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["http.request", "http.get", "http.post", "browser.navigate", "browser.goto", "fetch"],
+      "resources": ["http://*", "file://*", "data:*", "javascript:*", "ftp://*"]
+    },
+    {
+      "name": "block-sensitive-form-fields",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["browser.type", "browser.fill", "browser.click"],
+      "resources": [
+        "element:input[type=password*",
+        "element:input[name=password*",
+        "element:input[name=credit*",
+        "element:input[type=credit*",
+        "element:*[name=ssn*",
+        "element:*[name=social_security*",
+        "element:*[name=api_key*",
+        "element:*[name=secret*",
+        "element:*[name=token*"
+      ]
+    },
+    {
+      "name": "allow-navigation-trusted-domains",
+      "effect": "allow",
+      "principals": ["agent:*"],
+      "actions": ["browser.navigate", "browser.goto", "http.get", "fetch"],
+      "resources": [
+        "https://www.google.com*",
+        "https://google.com*",
+        "https://www.github.com*",
+        "https://github.com*",
+        "https://api.github.com*",
+        "https://www.wikipedia.org*",
+        "https://en.wikipedia.org*",
+        "https://www.example.com*",
+        "https://example.com*"
+      ],
+      "required_labels": ["browser_initialized"]
+    },
+    {
+      "name": "allow-browser-snapshot",
+      "effect": "allow",
+      "principals": ["agent:*"],
+      "actions": ["browser.snapshot", "browser.screenshot", "browser.get_state"],
+      "resources": ["*"],
+      "required_labels": ["browser_initialized"]
+    },
+    {
+      "name": "allow-browser-click-safe-elements",
+      "effect": "allow",
+      "principals": ["agent:*"],
+      "actions": ["browser.click", "browser.element.click", "click"],
+      "resources": [
+        "element:button[*",
+        "element:a[*",
+        "element:input[type=button*",
+        "element:input[type=submit*",
+        "element:input[type=checkbox*",
+        "element:input[type=radio*",
+        "element:role=button[*",
+        "element:role=link[*",
+        "element:role=tab[*",
+        "element:role=menuitem[*",
+        "element#*"
+      ],
+      "required_labels": ["element_visible", "snapshot_captured"]
+    },
+    {
+      "name": "allow-browser-type-safe-inputs",
+      "effect": "allow",
+      "principals": ["agent:*"],
+      "actions": ["browser.type", "browser.fill", "browser.element.type"],
+      "resources": [
+        "element:input[type=text*",
+        "element:input[type=search*",
+        "element:input[type=email*",
+        "element:input[type=url*",
+        "element:input[type=tel*",
+        "element:input[type=number*",
+        "element:textarea[*",
+        "element:role=textbox[*",
+        "element:role=searchbox[*",
+        "element:role=combobox[*"
+      ],
+      "required_labels": ["element_visible", "snapshot_captured"]
+    },
+    {
+      "name": "allow-browser-read-content",
+      "effect": "allow",
+      "principals": ["agent:*"],
+      "actions": ["browser.read", "browser.extract", "browser.get_text", "browser.get_html"],
+      "resources": ["*"],
+      "required_labels": ["snapshot_captured"]
+    },
+    {
+      "name": "allow-browser-scroll-wait",
+      "effect": "allow",
+      "principals": ["agent:*"],
+      "actions": ["browser.scroll", "browser.wait", "browser.wait_for", "browser.sleep"],
+      "resources": ["*"],
+      "required_labels": ["browser_initialized"]
+    },
+    {
+      "name": "default-deny",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["*"],
+      "resources": ["*"]
+    }
+  ]
+}
