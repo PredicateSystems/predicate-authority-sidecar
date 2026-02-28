@@ -12,3 +12,4 @@ pub mod models;
 pub mod policy;
 pub mod policy_loader;
 pub mod proof;
+pub mod ui;

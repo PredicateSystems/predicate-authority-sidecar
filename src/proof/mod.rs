@@ -17,6 +17,25 @@ pub struct DecisionStats {
     pub total_allowed: u64,
     pub total_denied: u64,
     pub denied_by_reason: HashMap<String, u64>,
+    /// Sum of all latencies in microseconds (for avg calculation)
+    pub total_latency_us: u64,
+    /// Count of requests with latency data
+    pub latency_count: u64,
+    /// Minimum latency seen (microseconds)
+    pub min_latency_us: Option<u64>,
+    /// Maximum latency seen (microseconds)
+    pub max_latency_us: Option<u64>,
+}
+
+impl DecisionStats {
+    /// Calculate average latency in microseconds
+    pub fn avg_latency_us(&self) -> Option<u64> {
+        if self.latency_count > 0 {
+            Some(self.total_latency_us / self.latency_count)
+        } else {
+            None
+        }
+    }
 }
 
 /// In-memory proof ledger
@@ -53,6 +72,18 @@ impl InMemoryProofLedger {
                 let reason_key = event.reason.to_string();
                 *stats.denied_by_reason.entry(reason_key).or_insert(0) += 1;
             }
+
+            // Track latency stats
+            if let Some(latency) = event.latency_us {
+                stats.total_latency_us += latency;
+                stats.latency_count += 1;
+                stats.min_latency_us = Some(
+                    stats.min_latency_us.map_or(latency, |min| min.min(latency)),
+                );
+                stats.max_latency_us = Some(
+                    stats.max_latency_us.map_or(latency, |max| max.max(latency)),
+                );
+            }
         }
 
         // Store event (with capacity limit)
@@ -77,6 +108,28 @@ impl InMemoryProofLedger {
         reason: AuthorizationReason,
         mandate_id: Option<String>,
     ) {
+        self.record_decision_with_latency(
+            principal_id,
+            action,
+            resource,
+            allowed,
+            reason,
+            mandate_id,
+            None,
+        );
+    }
+
+    /// Create and record an event with latency tracking
+    pub fn record_decision_with_latency(
+        &self,
+        principal_id: &str,
+        action: &str,
+        resource: &str,
+        allowed: bool,
+        reason: AuthorizationReason,
+        mandate_id: Option<String>,
+        latency_us: Option<u64>,
+    ) {
         let event = ProofEvent {
             event_type: if allowed {
                 "authorization_allowed".to_string()
@@ -90,6 +143,7 @@ impl InMemoryProofLedger {
             allowed,
             mandate_id,
             emitted_at_epoch_s: chrono::Utc::now().timestamp(),
+            latency_us,
         };
         self.record(event);
     }

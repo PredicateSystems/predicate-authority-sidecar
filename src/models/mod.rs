@@ -228,6 +228,9 @@ pub struct ProofEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mandate_id: Option<String>,
     pub emitted_at_epoch_s: i64,
+    /// Authorization latency in microseconds
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latency_us: Option<u64>,
 }
 
 // --- Wire format for sidecar HTTP API ---

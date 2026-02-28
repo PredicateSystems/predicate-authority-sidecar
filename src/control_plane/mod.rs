@@ -662,6 +662,7 @@ mod tests {
             allowed: true,
             mandate_id: Some("m_123".to_string()),
             emitted_at_epoch_s: 1700000000,
+            latency_us: Some(150),
         };
 
         let envelope =
