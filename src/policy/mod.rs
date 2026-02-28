@@ -510,18 +510,30 @@ mod tests {
 #[cfg(test)]
 mod pattern_tests {
     use super::matches_pattern;
-    
+
     #[test]
     fn test_agent_colon_star() {
         // This is the critical pattern from policy files
-        assert!(matches_pattern("agent:*", "agent:test"), "agent:* should match agent:test");
-        assert!(matches_pattern("agent:*", "agent:secureclaw"), "agent:* should match agent:secureclaw");
+        assert!(
+            matches_pattern("agent:*", "agent:test"),
+            "agent:* should match agent:test"
+        );
+        assert!(
+            matches_pattern("agent:*", "agent:secureclaw"),
+            "agent:* should match agent:secureclaw"
+        );
     }
-    
+
     #[test]
     fn test_star_matches_all() {
-        assert!(matches_pattern("*", "/src/index.ts"), "* should match /src/index.ts");
-        assert!(matches_pattern("*", "agent:test"), "* should match agent:test");
+        assert!(
+            matches_pattern("*", "/src/index.ts"),
+            "* should match /src/index.ts"
+        );
+        assert!(
+            matches_pattern("*", "agent:test"),
+            "* should match agent:test"
+        );
         assert!(matches_pattern("*", "fs.read"), "* should match fs.read");
     }
 }
