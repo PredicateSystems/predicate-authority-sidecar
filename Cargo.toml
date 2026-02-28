@@ -36,6 +36,10 @@ hmac = "0.12"
 base64 = "0.22"
 p256 = { version = "0.13", features = ["ecdsa"] }
 hex = "0.4"
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+rand = "0.8"
+zeroize = { version = "1.8", features = ["derive"] }
+lru = "0.12"
 
 # Pattern matching (for policy rules)
 glob = "0.3"

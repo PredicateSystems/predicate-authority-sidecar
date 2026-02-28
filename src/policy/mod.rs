@@ -2,6 +2,11 @@
 //!
 //! Uses glob-style pattern matching for principals, actions, and resources.
 //!
+//! # SSRF Protection
+//!
+//! The policy engine can optionally include SSRF protection, which acts as an
+//! implicit deny rule for requests targeting internal network resources, cloud
+//! metadata endpoints, and other sensitive targets.
 
 #![allow(dead_code)]
 
@@ -16,6 +21,7 @@ use std::sync::Arc;
 use crate::models::{
     AuthorizationDecision, AuthorizationReason, PolicyEffect, PolicyRule, SidecarAuthorizeRequest,
 };
+use crate::ssrf::SsrfProtection;
 
 /// Result of matching a request against policy rules
 #[derive(Debug, Clone)]
@@ -31,23 +37,37 @@ pub struct PolicyEngine {
     rules: Arc<RwLock<Vec<PolicyRule>>>,
     /// Whether the engine is running in audit/dry-run mode (log but don't block)
     audit_mode: Arc<RwLock<bool>>,
+    /// SSRF protection (optional, enabled by default)
+    ssrf_protection: Arc<RwLock<Option<SsrfProtection>>>,
 }
 
 impl PolicyEngine {
-    /// Create a new policy engine with empty rules
+    /// Create a new policy engine with empty rules and SSRF protection enabled
     pub fn new() -> Self {
         Self {
             rules: Arc::new(RwLock::new(Vec::new())),
             audit_mode: Arc::new(RwLock::new(false)),
+            ssrf_protection: Arc::new(RwLock::new(Some(SsrfProtection::default()))),
         }
     }
 
-    /// Create a policy engine with initial rules
+    /// Create a policy engine with initial rules and SSRF protection enabled
     pub fn with_rules(rules: Vec<PolicyRule>) -> Self {
         Self {
             rules: Arc::new(RwLock::new(rules)),
             audit_mode: Arc::new(RwLock::new(false)),
+            ssrf_protection: Arc::new(RwLock::new(Some(SsrfProtection::default()))),
         }
+    }
+
+    /// Enable or disable SSRF protection
+    pub fn set_ssrf_protection(&self, protection: Option<SsrfProtection>) {
+        *self.ssrf_protection.write() = protection;
+    }
+
+    /// Check if SSRF protection is enabled
+    pub fn has_ssrf_protection(&self) -> bool {
+        self.ssrf_protection.read().is_some()
     }
 
     /// Enable or disable audit mode
@@ -82,6 +102,18 @@ impl PolicyEngine {
         request: &SidecarAuthorizeRequest,
         passed_labels: &[String],
     ) -> PolicyMatchResult {
+        // Check SSRF protection first (implicit deny)
+        if let Some(ref ssrf) = *self.ssrf_protection.read() {
+            if let Some(reason) = ssrf.check_resource(&request.resource) {
+                return PolicyMatchResult {
+                    allowed: false,
+                    reason: AuthorizationReason::ExplicitDeny,
+                    matched_rule: Some(format!("ssrf-protection: {}", reason)),
+                    missing_labels: vec![],
+                };
+            }
+        }
+
         let rules = self.rules.read();
 
         // Find all matching rules
@@ -354,5 +386,111 @@ mod tests {
 
         engine.replace_rules(vec![sample_allow_rule(), sample_deny_rule()]);
         assert_eq!(engine.rule_count(), 2);
+    }
+
+    #[test]
+    fn test_ssrf_protection_blocks_localhost() {
+        let engine = PolicyEngine::with_rules(vec![PolicyRule {
+            name: "allow-all".to_string(),
+            effect: PolicyEffect::Allow,
+            principals: vec!["*".to_string()],
+            actions: vec!["*".to_string()],
+            resources: vec!["*".to_string()],
+            required_labels: vec![],
+            max_delegation_depth: None,
+        }]);
+
+        let request = SidecarAuthorizeRequest {
+            principal: "agent:test".to_string(),
+            action: "http.fetch".to_string(),
+            resource: "http://127.0.0.1/admin".to_string(),
+            intent_hash: None,
+            context: serde_json::Value::Null,
+            labels: vec![],
+        };
+
+        let result = engine.evaluate(&request);
+        assert!(!result.allowed);
+        assert_eq!(result.reason, AuthorizationReason::ExplicitDeny);
+        assert!(result.matched_rule.unwrap().contains("ssrf-protection"));
+    }
+
+    #[test]
+    fn test_ssrf_protection_blocks_metadata() {
+        let engine = PolicyEngine::with_rules(vec![PolicyRule {
+            name: "allow-all".to_string(),
+            effect: PolicyEffect::Allow,
+            principals: vec!["*".to_string()],
+            actions: vec!["*".to_string()],
+            resources: vec!["*".to_string()],
+            required_labels: vec![],
+            max_delegation_depth: None,
+        }]);
+
+        let request = SidecarAuthorizeRequest {
+            principal: "agent:test".to_string(),
+            action: "http.fetch".to_string(),
+            resource: "http://169.254.169.254/latest/meta-data/".to_string(),
+            intent_hash: None,
+            context: serde_json::Value::Null,
+            labels: vec![],
+        };
+
+        let result = engine.evaluate(&request);
+        assert!(!result.allowed);
+        assert!(result.matched_rule.unwrap().contains("metadata"));
+    }
+
+    #[test]
+    fn test_ssrf_protection_allows_public() {
+        let engine = PolicyEngine::with_rules(vec![PolicyRule {
+            name: "allow-all".to_string(),
+            effect: PolicyEffect::Allow,
+            principals: vec!["*".to_string()],
+            actions: vec!["*".to_string()],
+            resources: vec!["*".to_string()],
+            required_labels: vec![],
+            max_delegation_depth: None,
+        }]);
+
+        let request = SidecarAuthorizeRequest {
+            principal: "agent:test".to_string(),
+            action: "http.fetch".to_string(),
+            resource: "https://api.example.com/data".to_string(),
+            intent_hash: None,
+            context: serde_json::Value::Null,
+            labels: vec![],
+        };
+
+        let result = engine.evaluate(&request);
+        assert!(result.allowed);
+    }
+
+    #[test]
+    fn test_ssrf_protection_can_be_disabled() {
+        let engine = PolicyEngine::with_rules(vec![PolicyRule {
+            name: "allow-all".to_string(),
+            effect: PolicyEffect::Allow,
+            principals: vec!["*".to_string()],
+            actions: vec!["*".to_string()],
+            resources: vec!["*".to_string()],
+            required_labels: vec![],
+            max_delegation_depth: None,
+        }]);
+
+        // Disable SSRF protection
+        engine.set_ssrf_protection(None);
+
+        let request = SidecarAuthorizeRequest {
+            principal: "agent:test".to_string(),
+            action: "http.fetch".to_string(),
+            resource: "http://127.0.0.1/admin".to_string(),
+            intent_hash: None,
+            context: serde_json::Value::Null,
+            labels: vec![],
+        };
+
+        let result = engine.evaluate(&request);
+        assert!(result.allowed); // Would be blocked if SSRF was enabled
     }
 }

@@ -1,10 +1,25 @@
 //! Policy file loader with support for JSON and YAML formats.
 //!
 //! JSON is the default format. YAML is supported for files with `.yaml` or `.yml` extensions.
+//!
+//! # Signed Policies (Optional)
+//!
+//! When `--require-signed-policy` is enabled, policy files must be Ed25519 signed.
+//! Signed policy format:
+//! ```json
+//! {
+//!   "policy": { "rules": [...] },
+//!   "signature": "<base64-encoded-ed25519-signature>"
+//! }
+//! ```
 
 use std::path::Path;
 
 use crate::models::PolicyRule;
+use crate::policy_signer::{
+    is_signed_policy, parse_signed_policy, verify_policy_signature, PolicySignatureError,
+};
+use ed25519_dalek::VerifyingKey;
 
 /// Supported policy file formats
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +44,12 @@ pub enum PolicyLoadError {
 
     #[error("Policy file missing 'rules' array")]
     MissingRulesArray,
+
+    #[error("Policy signature error: {0}")]
+    SignatureError(#[from] PolicySignatureError),
+
+    #[error("Signed policy required but policy file is not signed")]
+    SignatureRequired,
 }
 
 /// Result of loading a policy file
@@ -37,6 +58,8 @@ pub struct PolicyLoadResult {
     pub rules: Vec<PolicyRule>,
     pub format: PolicyFormat,
     pub skipped_rules: usize,
+    /// Whether the policy was cryptographically signed
+    pub is_signed: bool,
 }
 
 /// Detect the format of a policy file based on its extension.
@@ -94,7 +117,70 @@ pub fn load_policy_from_string(
         rules: parsed_rules,
         format,
         skipped_rules,
+        is_signed: false,
     })
+}
+
+/// Configuration for policy signature verification
+#[derive(Debug, Clone, Default)]
+pub struct SignatureVerificationConfig {
+    /// If true, reject unsigned policies
+    pub require_signature: bool,
+    /// Public key for verifying signatures (required if require_signature is true)
+    pub public_key: Option<VerifyingKey>,
+}
+
+/// Load a policy file with optional signature verification.
+///
+/// If `config.require_signature` is true:
+/// - The policy must be in signed format (JSON only)
+/// - The signature must be valid against the provided public key
+///
+/// If `config.require_signature` is false:
+/// - Signed policies will still be verified if a public key is provided
+/// - Unsigned policies will be loaded normally
+pub fn load_policy_file_verified<P: AsRef<Path>>(
+    path: P,
+    config: &SignatureVerificationConfig,
+) -> Result<PolicyLoadResult, PolicyLoadError> {
+    let path = path.as_ref();
+    let content = std::fs::read_to_string(path)?;
+    let format = detect_format(path);
+
+    // Check if this is a signed policy (only JSON supports signing)
+    if format == PolicyFormat::Json && is_signed_policy(&content) {
+        return load_signed_policy_from_string(&content, config);
+    }
+
+    // Not a signed policy
+    if config.require_signature {
+        return Err(PolicyLoadError::SignatureRequired);
+    }
+
+    load_policy_from_string(&content, format)
+}
+
+/// Load and verify a signed policy from a JSON string.
+fn load_signed_policy_from_string(
+    content: &str,
+    config: &SignatureVerificationConfig,
+) -> Result<PolicyLoadResult, PolicyLoadError> {
+    let signed_policy = parse_signed_policy(content)?;
+
+    // Verify signature if we have a public key
+    if let Some(ref public_key) = config.public_key {
+        verify_policy_signature(&signed_policy, public_key)?;
+    } else if config.require_signature {
+        // Require signature but no key to verify with - this is a configuration error
+        return Err(PolicyLoadError::SignatureRequired);
+    }
+
+    // Extract the policy content and load rules
+    let policy_content = serde_json::to_string(&signed_policy.policy)?;
+    let mut result = load_policy_from_string(&policy_content, PolicyFormat::Json)?;
+    result.is_signed = true;
+
+    Ok(result)
 }
 
 #[cfg(test)]

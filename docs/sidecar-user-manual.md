@@ -16,7 +16,8 @@ A comprehensive guide to installing, configuring, and operating the Predicate Au
 8. [API Reference](#api-reference)
 9. [Terminal Dashboard](#terminal-dashboard)
 10. [Delegation Chains](#delegation-chains)
-11. [Troubleshooting](#troubleshooting)
+11. [Security Features (Phase 5)](#security-features-phase-5)
+12. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -210,6 +211,16 @@ Configuration can be provided via (in order of precedence):
 | `--policy-file` | `PREDICATE_POLICY_FILE` | - | Path to policy file |
 | `--log-level` | `PREDICATE_LOG_LEVEL` | `info` | trace/debug/info/warn/error |
 | `--identity-mode` | `PREDICATE_IDENTITY_MODE` | `local` | Identity provider mode |
+
+### Security Options (Phase 5)
+
+| Option | Environment Variable | Default | Description |
+|--------|---------------------|---------|-------------|
+| `--disable-ssrf-protection` | `PREDICATE_DISABLE_SSRF` | `false` | Disable SSRF blocking |
+| `--require-signed-policy` | `PREDICATE_REQUIRE_SIGNED_POLICY` | `false` | Require Ed25519-signed policies |
+| `--policy-signing-key` | `PREDICATE_POLICY_SIGNING_KEY` | - | Ed25519 public key (hex) |
+| `--loop-guard-threshold` | `PREDICATE_LOOP_GUARD_THRESHOLD` | `5` | Failure count before blocking |
+| `--loop-guard-window-s` | `PREDICATE_LOOP_GUARD_WINDOW_S` | `60` | Time window for failures |
 
 ### Configuration File
 
@@ -779,6 +790,112 @@ Agent A (root)
 Revoke Agent B's mandate → Agent C and D are also revoked
 Agent A's mandate remains valid
 ```
+
+---
+
+## Security Features (Phase 5)
+
+The sidecar includes built-in security hardening features for enterprise deployments.
+
+### SSRF Protection
+
+Server-Side Request Forgery (SSRF) protection blocks requests to internal network resources:
+
+**Protected resources:**
+- **Private IPs**: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+- **Link-local**: 169.254.0.0/16
+- **Localhost**: 127.0.0.0/8, localhost, ::1
+- **Cloud Metadata**: AWS (169.254.169.254), GCP, Azure, Kubernetes
+- **Internal DNS**: *.internal, *.local, *.localhost, *.corp, *.lan, *.intranet
+
+SSRF protection is **enabled by default**. Blocked requests return:
+```json
+{
+  "allowed": false,
+  "reason": "explicit_deny",
+  "violated_rule": "ssrf-protection: SSRF: cloud metadata endpoint blocked (169.254.169.254)"
+}
+```
+
+To disable (development only, not recommended for production):
+```bash
+./predicate-authorityd --disable-ssrf-protection --policy-file policy.json run
+```
+
+### Policy Signature Verification
+
+Prevent unauthorized policy modifications with Ed25519 cryptographic signatures.
+
+**Signed policy file format:**
+```json
+{
+  "policy": {
+    "rules": [...]
+  },
+  "signature": "<base64-encoded-ed25519-signature>"
+}
+```
+
+**Enable signature verification:**
+```bash
+./predicate-authorityd \
+  --require-signed-policy \
+  --policy-signing-key "a1b2c3d4e5f6..." \
+  --policy-file signed-policy.json \
+  run
+```
+
+The sidecar will:
+1. Parse the signed policy JSON
+2. Verify the signature against the configured public key
+3. Reject policies with invalid or missing signatures
+
+**Key management:**
+- Private key: Keep secure on control plane or CI/CD system
+- Public key: Distribute to sidecars via `--policy-signing-key` or environment variable
+
+### Loop Guard
+
+Prevents runaway agents from infinitely retrying failed actions.
+
+**Configuration:**
+```bash
+./predicate-authorityd \
+  --loop-guard-threshold 5 \
+  --loop-guard-window-s 60 \
+  --policy-file policy.json \
+  run
+```
+
+**Behavior:**
+- Tracks failures per (principal, action, resource) tuple
+- After threshold consecutive failures within the window, requests are blocked
+- Returns `LOOP_GUARD_TRIGGERED` reason
+- Automatically resets after cooldown period
+
+### Merkle Hash Chain (Audit Integrity)
+
+The proof ledger uses SHA-256 hash chaining for tamper-evident audit trails.
+
+**Each proof event contains:**
+- `event_id`: Unique identifier
+- `chain_hash`: SHA-256(previous_hash + event_data)
+- `timestamp`: ISO 8601 timestamp
+
+**Verify chain integrity:**
+```bash
+# Get current chain head (latest hash)
+curl -s http://127.0.0.1:8787/ledger/chain-head | jq
+# Response: {"chain_hash": "abc123...", "event_count": 47}
+
+# Verify full chain integrity
+curl -s http://127.0.0.1:8787/ledger/verify | jq
+# Response: {"valid": true, "event_count": 47}
+```
+
+### Secret Zeroization
+
+Sensitive key material (signing keys, OIDC secrets) is automatically zeroized from memory when no longer needed using the `zeroize` crate. This protects against memory-dump attacks.
 
 ---
 

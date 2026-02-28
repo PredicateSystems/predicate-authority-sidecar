@@ -229,8 +229,15 @@ pub struct ProofEvent {
     pub mandate_id: Option<String>,
     pub emitted_at_epoch_s: i64,
     /// Authorization latency in microseconds
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latency_us: Option<u64>,
+    /// Unique event identifier for this proof event
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_id: Option<String>,
+    /// SHA-256 hash chain: H(prev_chain_hash || canonical_event_json)
+    /// Creates a tamper-evident audit trail that can be verified by the control plane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain_hash: Option<String>,
 }
 
 // --- Wire format for sidecar HTTP API ---
