@@ -1,0 +1,77 @@
+{
+  "rules": [
+    {
+      "name": "block-catastrophic-commands",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["shell.exec", "bash", "exec", "run"],
+      "resources": [
+        "rm -rf /*",
+        "rm -rf /",
+        ":(){ :|:& };:",
+        "dd if=/dev/zero*",
+        "mkfs*",
+        "fdisk*",
+        "curl*|base64*",
+        "wget*|base64*",
+        "cat*|nc*",
+        "cat*|curl*"
+      ]
+    },
+    {
+      "name": "allow-all-filesystem-read-audit",
+      "effect": "allow",
+      "principals": ["*"],
+      "actions": ["fs.read", "fs.read_file", "fs.list", "fs.readdir", "fs.stat", "fs.exists", "fs.access", "fs.glob", "fs.find", "fs.search", "file.read", "read", "glob", "grep"],
+      "resources": ["*"],
+      "required_labels": ["audit_enabled"]
+    },
+    {
+      "name": "allow-all-filesystem-write-audit",
+      "effect": "allow",
+      "principals": ["*"],
+      "actions": ["fs.write", "fs.write_file", "fs.create", "fs.append", "fs.delete", "fs.remove", "fs.rename", "fs.move", "fs.copy", "fs.mkdir", "fs.rmdir", "fs.chmod", "fs.chown", "file.write", "file.delete", "write", "edit", "delete"],
+      "resources": ["*"],
+      "required_labels": ["audit_enabled"]
+    },
+    {
+      "name": "allow-all-shell-execution-audit",
+      "effect": "allow",
+      "principals": ["*"],
+      "actions": ["shell.exec", "bash", "bash.exec", "os.exec", "os.spawn", "os.run", "process.spawn", "process.exec", "system.run", "system.exec", "exec", "run"],
+      "resources": ["*"],
+      "required_labels": ["audit_enabled"]
+    },
+    {
+      "name": "allow-all-http-requests-audit",
+      "effect": "allow",
+      "principals": ["*"],
+      "actions": ["http.request", "http.get", "http.post", "http.put", "http.patch", "http.delete", "fetch"],
+      "resources": ["*"],
+      "required_labels": ["audit_enabled"]
+    },
+    {
+      "name": "allow-all-browser-actions-audit",
+      "effect": "allow",
+      "principals": ["*"],
+      "actions": ["browser.navigate", "browser.goto", "browser.snapshot", "browser.screenshot", "browser.click", "browser.type", "browser.fill", "browser.scroll", "browser.wait", "browser.read", "browser.extract"],
+      "resources": ["*"],
+      "required_labels": ["audit_enabled"]
+    },
+    {
+      "name": "allow-all-other-actions-audit",
+      "effect": "allow",
+      "principals": ["*"],
+      "actions": ["*"],
+      "resources": ["*"],
+      "required_labels": ["audit_enabled"]
+    },
+    {
+      "name": "deny-if-audit-not-enabled",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["*"],
+      "resources": ["*"]
+    }
+  ]
+}

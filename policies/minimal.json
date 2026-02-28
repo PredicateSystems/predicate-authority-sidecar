@@ -1,0 +1,18 @@
+{
+  "rules": [
+    {
+      "name": "allow-browser-https",
+      "effect": "allow",
+      "principals": ["agent:*"],
+      "actions": ["browser.*"],
+      "resources": ["https://*"]
+    },
+    {
+      "name": "default-deny",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["*"],
+      "resources": ["*"]
+    }
+  ]
+}

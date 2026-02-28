@@ -1,0 +1,131 @@
+{
+  "rules": [
+    {
+      "name": "block-sensitive-files",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["fs.read", "file.read", "read"],
+      "resources": [
+        "*/.ssh/*",
+        "*/.aws/*",
+        "*/.azure/*",
+        "*/.config/gcloud/*",
+        "/etc/passwd",
+        "/etc/shadow",
+        "*/.env",
+        "*/.env.*",
+        "**/.env",
+        "**/.env.*"
+      ]
+    },
+    {
+      "name": "block-all-writes",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["fs.write", "fs.delete", "fs.create", "fs.mkdir", "fs.rmdir", "fs.rename", "file.write", "file.delete", "write", "edit", "delete"],
+      "resources": ["*"]
+    },
+    {
+      "name": "block-dangerous-commands",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["shell.exec", "bash", "exec", "run"],
+      "resources": [
+        "rm *",
+        "mv *",
+        "cp *",
+        "mkdir *",
+        "touch *",
+        "chmod *",
+        "sudo *",
+        "su *",
+        "curl * | *",
+        "wget * | *",
+        "pip install*",
+        "npm install*"
+      ]
+    },
+    {
+      "name": "block-http-mutations",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["http.post", "http.put", "http.patch", "http.delete"],
+      "resources": ["*"]
+    },
+    {
+      "name": "allow-read-data-files",
+      "effect": "allow",
+      "principals": ["agent:*"],
+      "actions": ["fs.read", "fs.read_file", "fs.list", "fs.stat", "fs.exists", "fs.glob", "file.read", "read", "glob", "grep"],
+      "resources": [
+        "*.csv",
+        "*.json",
+        "*.jsonl",
+        "*.parquet",
+        "*.xlsx",
+        "*.xls",
+        "*.tsv",
+        "*.txt",
+        "*.md",
+        "*.yaml",
+        "*.yml",
+        "*.xml",
+        "*.sql",
+        "*.db",
+        "*.sqlite",
+        "**/data/*",
+        "**/datasets/*",
+        "**/reports/*",
+        "**/output/*"
+      ]
+    },
+    {
+      "name": "allow-python-analysis",
+      "effect": "allow",
+      "principals": ["agent:*"],
+      "actions": ["shell.exec", "bash", "exec", "run"],
+      "resources": [
+        "python *",
+        "python3 *",
+        "jupyter *",
+        "ipython *",
+        "cat *",
+        "head *",
+        "tail *",
+        "wc *",
+        "sort *",
+        "uniq *",
+        "cut *",
+        "awk *",
+        "sed *",
+        "jq *",
+        "yq *",
+        "csvtool *",
+        "csvkit *",
+        "xsv *",
+        "sqlite3 *",
+        "psql *",
+        "mysql *",
+        "ls *",
+        "ls",
+        "find *",
+        "grep *",
+        "rg *"
+      ]
+    },
+    {
+      "name": "allow-https-get",
+      "effect": "allow",
+      "principals": ["agent:*"],
+      "actions": ["http.get", "http.request", "fetch"],
+      "resources": ["https://*"]
+    },
+    {
+      "name": "default-deny",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["*"],
+      "resources": ["*"]
+    }
+  ]
+}

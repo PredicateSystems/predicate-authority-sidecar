@@ -20,6 +20,7 @@ use predicate_authorityd::http::{create_router, AppState};
 use predicate_authorityd::identity::LocalIdentityRegistry;
 use predicate_authorityd::models;
 use predicate_authorityd::policy::PolicyEngine;
+use predicate_authorityd::policy_loader;
 
 /// Predicate Authority Sidecar Daemon
 #[derive(Parser, Debug)]
@@ -46,7 +47,7 @@ struct Cli {
     #[arg(long, env = "PREDICATE_MODE")]
     mode: Option<String>,
 
-    /// Path to policy JSON file
+    /// Path to policy file (JSON or YAML). Format auto-detected by extension (.yaml/.yml for YAML, others default to JSON)
     #[arg(long, env = "PREDICATE_POLICY_FILE")]
     policy_file: Option<String>,
 
@@ -432,28 +433,28 @@ async fn main() -> anyhow::Result<()> {
     // Initialize policy engine
     let policy_engine = PolicyEngine::new();
 
-    // Load policy file if specified
+    // Load policy file if specified (supports JSON and YAML formats)
     if let Some(ref policy_path) = policy_file {
-        info!("Loading policy from: {}", policy_path);
-        match std::fs::read_to_string(policy_path) {
-            Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
-                Ok(json) => {
-                    if let Some(rules) = json.get("rules").and_then(|r| r.as_array()) {
-                        let parsed_rules: Vec<models::PolicyRule> = rules
-                            .iter()
-                            .filter_map(|r| serde_json::from_value(r.clone()).ok())
-                            .collect();
-                        let count = parsed_rules.len();
-                        policy_engine.replace_rules(parsed_rules);
-                        info!("Loaded {} policy rules", count);
-                    }
+        let format = policy_loader::detect_format(policy_path);
+        info!(
+            "Loading policy from: {} (format: {:?})",
+            policy_path, format
+        );
+        match policy_loader::load_policy_file(policy_path) {
+            Ok(result) => {
+                let count = result.rules.len();
+                policy_engine.replace_rules(result.rules);
+                if result.skipped_rules > 0 {
+                    warn!(
+                        "Loaded {} policy rules, skipped {} malformed rules",
+                        count, result.skipped_rules
+                    );
+                } else {
+                    info!("Loaded {} policy rules", count);
                 }
-                Err(e) => {
-                    warn!("Failed to parse policy file: {}", e);
-                }
-            },
+            }
             Err(e) => {
-                warn!("Failed to read policy file: {}", e);
+                warn!("Failed to load policy file: {}", e);
             }
         }
     }

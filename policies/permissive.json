@@ -1,0 +1,68 @@
+{
+  "rules": [
+    {
+      "name": "block-catastrophic-commands",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["shell.exec", "bash", "exec", "run"],
+      "resources": [
+        "rm -rf /*",
+        "rm -rf /",
+        "rm -rf ~",
+        ":(){ :|:& };:",
+        "dd if=/dev/zero of=/dev/*",
+        "mkfs.*",
+        "> /dev/sd*",
+        "> /dev/nvme*"
+      ]
+    },
+    {
+      "name": "block-sensitive-credentials",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["fs.read", "fs.write", "file.read", "file.write", "read", "write"],
+      "resources": [
+        "*/.ssh/id_*",
+        "*/.aws/credentials",
+        "*/.azure/credentials*",
+        "*/.config/gcloud/credentials*",
+        "/etc/shadow"
+      ]
+    },
+    {
+      "name": "allow-all-filesystem",
+      "effect": "allow",
+      "principals": ["agent:*"],
+      "actions": ["fs.*", "file.*", "read", "write", "edit", "delete", "glob", "grep"],
+      "resources": ["*"]
+    },
+    {
+      "name": "allow-all-shell",
+      "effect": "allow",
+      "principals": ["agent:*"],
+      "actions": ["shell.exec", "bash", "exec", "run", "os.*", "process.*", "system.*"],
+      "resources": ["*"]
+    },
+    {
+      "name": "allow-all-http",
+      "effect": "allow",
+      "principals": ["agent:*"],
+      "actions": ["http.*", "fetch"],
+      "resources": ["*"]
+    },
+    {
+      "name": "allow-all-browser",
+      "effect": "allow",
+      "principals": ["agent:*"],
+      "actions": ["browser.*"],
+      "resources": ["*"]
+    },
+    {
+      "name": "default-deny",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["*"],
+      "resources": ["*"]
+    }
+  ]
+}
