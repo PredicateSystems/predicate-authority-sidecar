@@ -21,6 +21,7 @@ use predicate_authorityd::identity::LocalIdentityRegistry;
 use predicate_authorityd::models;
 use predicate_authorityd::policy::PolicyEngine;
 use predicate_authorityd::policy_loader;
+use predicate_authorityd::ui;
 
 /// Predicate Authority Sidecar Daemon
 #[derive(Parser, Debug)]
@@ -50,6 +51,10 @@ struct Cli {
     /// Path to policy file (JSON or YAML). Format auto-detected by extension (.yaml/.yml for YAML, others default to JSON)
     #[arg(long, env = "PREDICATE_POLICY_FILE")]
     policy_file: Option<String>,
+
+    /// Enable audit/dry-run mode (log decisions but don't actually block)
+    #[arg(long, env = "PREDICATE_AUDIT_MODE")]
+    audit_mode: bool,
 
     /// Path to local identity registry JSON file
     #[arg(long, env = "PREDICATE_IDENTITY_FILE")]
@@ -195,6 +200,13 @@ enum Commands {
     /// Start the daemon (default)
     Run,
 
+    /// Launch interactive terminal dashboard with HTTP server
+    Dashboard {
+        /// UI refresh interval in milliseconds
+        #[arg(long, default_value = "100")]
+        refresh_ms: u64,
+    },
+
     /// Generate example configuration file
     InitConfig {
         /// Output path for config file
@@ -245,6 +257,12 @@ async fn main() -> anyhow::Result<()> {
             println!("  Target: {}", std::env::consts::ARCH);
             println!("  OS: {}", std::env::consts::OS);
             return Ok(());
+        }
+        Some(Commands::Dashboard { refresh_ms }) => {
+            // Dashboard mode: run HTTP server + TUI together
+            // Store refresh_ms for later use
+            std::env::set_var("PREDICATE_TUI_REFRESH_MS", refresh_ms.to_string());
+            // Continue with startup, TUI will be launched after server setup
         }
         Some(Commands::Run) | None => {
             // Continue with normal startup
@@ -452,11 +470,27 @@ async fn main() -> anyhow::Result<()> {
                 } else {
                     info!("Loaded {} policy rules", count);
                 }
+
+                // Detect audit mode from policy file name
+                let path_lower = policy_path.to_lowercase();
+                if path_lower.contains("audit")
+                    || path_lower.contains("dry-run")
+                    || path_lower.contains("dryrun")
+                {
+                    policy_engine.set_audit_mode(true);
+                    info!("Audit mode enabled (detected from policy filename)");
+                }
             }
             Err(e) => {
                 warn!("Failed to load policy file: {}", e);
             }
         }
+    }
+
+    // Enable audit mode if explicitly requested via CLI
+    if cli.audit_mode {
+        policy_engine.set_audit_mode(true);
+        info!("Audit mode enabled via --audit-mode flag");
     }
 
     // Create application state
@@ -622,19 +656,49 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // Create router
-    let app = create_router(state);
-
     // Parse address
     let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
+
+    // Check if we're in dashboard mode
+    let is_dashboard_mode = matches!(&cli.command, Some(Commands::Dashboard { .. }));
+    let refresh_ms: u64 = std::env::var("PREDICATE_TUI_REFRESH_MS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(100);
+
+    // Create router (state is cloned, but inner Arc fields are shared)
+    let app = create_router(state.clone());
+
+    // Start server
+    let listener = tokio::net::TcpListener::bind(addr).await?;
     info!("Listening on http://{}", addr);
 
-    // Start server with graceful shutdown
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    if is_dashboard_mode {
+        // Dashboard mode: run HTTP server + TUI together
+        info!("Starting dashboard mode (refresh: {}ms)", refresh_ms);
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+        // Run server in background task
+        let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
+
+        // Run both concurrently - TUI exit or server shutdown will end the session
+        tokio::select! {
+            result = server => {
+                if let Err(e) = result {
+                    tracing::error!("Server error: {}", e);
+                }
+            }
+            result = ui::run_dashboard(state, refresh_ms) => {
+                if let Err(e) = result {
+                    tracing::error!("TUI error: {}", e);
+                }
+            }
+        }
+    } else {
+        // Normal mode: just run the HTTP server
+        axum::serve(listener, app)
+            .with_graceful_shutdown(shutdown_signal())
+            .await?;
+    }
 
     info!("Shutdown complete");
     Ok(())

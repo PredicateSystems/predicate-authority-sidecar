@@ -139,6 +139,9 @@ async fn authorize_handler(
     headers: HeaderMap,
     Json(request): Json<SidecarAuthorizeRequest>,
 ) -> impl IntoResponse {
+    // Start timing
+    let start = std::time::Instant::now();
+
     // Validate bearer token if IdP bridge is configured and requires validation
     if let Some(ref bridge) = state.idp_bridge {
         if bridge.requires_token() {
@@ -191,14 +194,18 @@ async fn authorize_handler(
     // Evaluate policy
     let result = state.policy_engine.evaluate(&request);
 
-    // Record to proof ledger
-    state.proof_ledger.record_decision(
+    // Calculate latency
+    let latency_us = start.elapsed().as_micros() as u64;
+
+    // Record to proof ledger with latency
+    state.proof_ledger.record_decision_with_latency(
         &request.principal,
         &request.action,
         &request.resource,
         result.allowed,
         result.reason.clone(),
         None, // Mandate will be added in Phase 4
+        Some(latency_us),
     );
 
     let decision: AuthorizationDecision = result.into();

@@ -682,6 +682,7 @@ mod tests {
             allowed: true,
             mandate_id: Some("m_123".to_string()),
             emitted_at_epoch_s: 1700000000,
+            latency_us: None,
         };
 
         let item = registry.enqueue_proof_event(&event);
@@ -707,6 +708,7 @@ mod tests {
             allowed: true,
             mandate_id: None,
             emitted_at_epoch_s: 1700000000,
+            latency_us: None,
         };
 
         let item = registry.enqueue_proof_event(&event);
@@ -733,6 +735,7 @@ mod tests {
             allowed: false,
             mandate_id: None,
             emitted_at_epoch_s: 1700000000,
+            latency_us: None,
         };
 
         let item = registry.enqueue_proof_event(&event);
@@ -774,6 +777,7 @@ mod tests {
             allowed: true,
             mandate_id: None,
             emitted_at_epoch_s: 1700000000,
+            latency_us: None,
         };
         registry.enqueue_proof_event(&event);
 
@@ -796,6 +800,7 @@ mod tests {
             allowed: true,
             mandate_id: Some("m_secret".to_string()),
             emitted_at_epoch_s: 1700000000,
+            latency_us: Some(250),
         };
 
         registry.enqueue_proof_event(&event);
