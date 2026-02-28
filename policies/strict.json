@@ -34,7 +34,19 @@
       "name": "block-outside-workspace",
       "effect": "deny",
       "principals": ["*"],
-      "actions": ["fs.write", "fs.delete", "fs.create", "fs.mkdir", "fs.rmdir", "fs.rename", "file.write", "file.delete", "write", "edit", "delete"],
+      "actions": [
+        "fs.write",
+        "fs.delete",
+        "fs.create",
+        "fs.mkdir",
+        "fs.rmdir",
+        "fs.rename",
+        "file.write",
+        "file.delete",
+        "write",
+        "edit",
+        "delete"
+      ],
       "resources": [
         "/etc/*",
         "/usr/*",
@@ -90,26 +102,40 @@
       "effect": "deny",
       "principals": ["*"],
       "actions": ["http.request", "http.get", "http.post", "fetch", "browser.navigate"],
-      "resources": [
-        "http://*",
-        "ftp://*",
-        "file://*",
-        "data:text/html*",
-        "javascript:*"
-      ]
+      "resources": ["http://*", "ftp://*", "file://*", "data:text/html*", "javascript:*"]
     },
     {
       "name": "allow-workspace-read",
       "effect": "allow",
       "principals": ["agent:*"],
-      "actions": ["fs.read", "fs.read_file", "fs.list", "fs.readdir", "fs.stat", "fs.exists", "fs.glob", "file.read", "read", "glob", "grep"],
+      "actions": [
+        "fs.read",
+        "fs.read_file",
+        "fs.list",
+        "fs.readdir",
+        "fs.stat",
+        "fs.exists",
+        "fs.glob",
+        "file.read",
+        "read",
+        "glob",
+        "grep"
+      ],
       "resources": ["*"]
     },
     {
       "name": "allow-workspace-write",
       "effect": "allow",
       "principals": ["agent:*"],
-      "actions": ["fs.write", "fs.write_file", "fs.create", "fs.mkdir", "file.write", "write", "edit"],
+      "actions": [
+        "fs.write",
+        "fs.write_file",
+        "fs.create",
+        "fs.mkdir",
+        "file.write",
+        "write",
+        "edit"
+      ],
       "resources": [
         "*/workspace/*",
         "*/projects/*",
@@ -132,12 +158,7 @@
       "effect": "allow",
       "principals": ["agent:*"],
       "actions": ["fs.delete", "fs.remove", "fs.rmdir", "file.delete", "delete"],
-      "resources": [
-        "*/workspace/*",
-        "*/projects/*",
-        "*/.secureclaw/*",
-        "./*"
-      ],
+      "resources": ["*/workspace/*", "*/projects/*", "*/.secureclaw/*", "./*"],
       "required_labels": ["intent_verified", "deletion_confirmed"]
     },
     {
@@ -217,7 +238,15 @@
       "name": "allow-https-requests",
       "effect": "allow",
       "principals": ["agent:*"],
-      "actions": ["http.request", "http.get", "http.post", "http.put", "http.patch", "http.delete", "fetch"],
+      "actions": [
+        "http.request",
+        "http.get",
+        "http.post",
+        "http.put",
+        "http.patch",
+        "http.delete",
+        "fetch"
+      ],
       "resources": ["https://*"]
     },
     {
@@ -232,7 +261,17 @@
       "name": "allow-browser-interactions",
       "effect": "allow",
       "principals": ["agent:*"],
-      "actions": ["browser.snapshot", "browser.screenshot", "browser.click", "browser.type", "browser.fill", "browser.scroll", "browser.wait", "browser.read", "browser.extract"],
+      "actions": [
+        "browser.snapshot",
+        "browser.screenshot",
+        "browser.click",
+        "browser.type",
+        "browser.fill",
+        "browser.scroll",
+        "browser.wait",
+        "browser.read",
+        "browser.extract"
+      ],
       "resources": ["*"],
       "required_labels": ["browser_initialized", "snapshot_captured"]
     },

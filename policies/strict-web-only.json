@@ -4,28 +4,71 @@
       "name": "block-all-filesystem-read",
       "effect": "deny",
       "principals": ["*"],
-      "actions": ["fs.read", "fs.read_file", "fs.list", "fs.stat", "fs.exists", "file.read", "read"],
+      "actions": [
+        "fs.read",
+        "fs.read_file",
+        "fs.list",
+        "fs.stat",
+        "fs.exists",
+        "file.read",
+        "read"
+      ],
       "resources": ["*"]
     },
     {
       "name": "block-all-filesystem-write",
       "effect": "deny",
       "principals": ["*"],
-      "actions": ["fs.write", "fs.write_file", "fs.create", "fs.delete", "fs.remove", "fs.mkdir", "fs.rmdir", "fs.rename", "fs.copy", "fs.move", "file.write", "write", "edit"],
+      "actions": [
+        "fs.write",
+        "fs.write_file",
+        "fs.create",
+        "fs.delete",
+        "fs.remove",
+        "fs.mkdir",
+        "fs.rmdir",
+        "fs.rename",
+        "fs.copy",
+        "fs.move",
+        "file.write",
+        "write",
+        "edit"
+      ],
       "resources": ["*"]
     },
     {
       "name": "block-all-system-execution",
       "effect": "deny",
       "principals": ["*"],
-      "actions": ["os.exec", "os.spawn", "os.run", "shell.exec", "shell.run", "bash", "bash.exec", "process.spawn", "process.exec", "system.run", "system.exec", "exec", "run"],
+      "actions": [
+        "os.exec",
+        "os.spawn",
+        "os.run",
+        "shell.exec",
+        "shell.run",
+        "bash",
+        "bash.exec",
+        "process.spawn",
+        "process.exec",
+        "system.run",
+        "system.exec",
+        "exec",
+        "run"
+      ],
       "resources": ["*"]
     },
     {
       "name": "block-insecure-http",
       "effect": "deny",
       "principals": ["*"],
-      "actions": ["http.request", "http.get", "http.post", "browser.navigate", "browser.goto", "fetch"],
+      "actions": [
+        "http.request",
+        "http.get",
+        "http.post",
+        "browser.navigate",
+        "browser.goto",
+        "fetch"
+      ],
       "resources": ["http://*", "file://*", "data:*", "javascript:*", "ftp://*"]
     },
     {
