@@ -473,7 +473,10 @@ async fn main() -> anyhow::Result<()> {
 
                 // Detect audit mode from policy file name
                 let path_lower = policy_path.to_lowercase();
-                if path_lower.contains("audit") || path_lower.contains("dry-run") || path_lower.contains("dryrun") {
+                if path_lower.contains("audit")
+                    || path_lower.contains("dry-run")
+                    || path_lower.contains("dryrun")
+                {
                     policy_engine.set_audit_mode(true);
                     info!("Audit mode enabled (detected from policy filename)");
                 }

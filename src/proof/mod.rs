@@ -118,6 +118,7 @@ impl InMemoryProofLedger {
     }
 
     /// Create and record an event with latency tracking
+    #[allow(clippy::too_many_arguments)]
     pub fn record_decision_with_latency(
         &self,
         principal_id: &str,

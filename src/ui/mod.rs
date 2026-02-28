@@ -23,22 +23,16 @@ use ratatui::{
 use crate::http::AppState;
 
 /// Filter mode for the event list
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum FilterMode {
     /// Show all events
+    #[default]
     All,
     /// Show only DENY events
     DenyOnly,
     /// Filter by agent/principal ID (contains match)
     ByAgent(String),
 }
-
-impl Default for FilterMode {
-    fn default() -> Self {
-        FilterMode::All
-    }
-}
-
 
 /// TUI application state
 pub struct TuiApp {
@@ -283,7 +277,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &TuiApp) {
 
     // Mode indicator
     let mode_text = if is_audit { "audit" } else { "strict" };
-    let mode_color = if is_audit { Color::Yellow } else { Color::Yellow };
+    let mode_color = Color::Yellow;
 
     // Filter indicator
     let filter_spans: Vec<Span> = match &app.filter_mode {
@@ -323,7 +317,10 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &TuiApp) {
     ];
     first_line.extend(filter_spans);
     first_line.push(Span::raw("  "));
-    first_line.push(Span::styled("[?:help]", Style::default().fg(Color::DarkGray)));
+    first_line.push(Span::styled(
+        "[?:help]",
+        Style::default().fg(Color::DarkGray),
+    ));
 
     let header_text = vec![
         Line::from(first_line),
@@ -364,9 +361,10 @@ fn draw_authority_gate(frame: &mut Frame, area: Rect, app: &TuiApp) {
         .filter(|event| match &app.filter_mode {
             FilterMode::All => true,
             FilterMode::DenyOnly => !event.allowed,
-            FilterMode::ByAgent(agent) => {
-                event.principal_id.to_lowercase().contains(&agent.to_lowercase())
-            }
+            FilterMode::ByAgent(agent) => event
+                .principal_id
+                .to_lowercase()
+                .contains(&agent.to_lowercase()),
         })
         .collect();
 
@@ -379,9 +377,14 @@ fn draw_authority_gate(frame: &mut Frame, area: Rect, app: &TuiApp) {
             Span::styled("  Filter: ", Style::default().fg(Color::Yellow)),
             Span::styled(
                 format!("{}_", app.filter_input_buffer),
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" (Enter to apply, Esc to cancel)", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                " (Enter to apply, Esc to cancel)",
+                Style::default().fg(Color::DarkGray),
+            ),
         ]));
         lines.push(Line::from(""));
     }
@@ -407,7 +410,9 @@ fn draw_authority_gate(frame: &mut Frame, area: Rect, app: &TuiApp) {
     } else {
         // Apply scroll offset and limit to visible area
         let visible_count = (area.height.saturating_sub(2) / 4) as usize; // 4 lines per event
-        let scroll = app.scroll_offset.min(filtered_events.len().saturating_sub(1));
+        let scroll = app
+            .scroll_offset
+            .min(filtered_events.len().saturating_sub(1));
         let visible_events = filtered_events.iter().skip(scroll).take(visible_count);
 
         for event in visible_events {
@@ -500,18 +505,29 @@ fn draw_authority_gate(frame: &mut Frame, area: Rect, app: &TuiApp) {
             filtered_events.len()
         )
     } else {
-        format!(" LIVE AUTHORITY GATE{}{} ", audit_indicator, filter_indicator)
+        format!(
+            " LIVE AUTHORITY GATE{}{} ",
+            audit_indicator, filter_indicator
+        )
     };
 
     // Use yellow border for audit mode
-    let border_color = if is_audit { Color::Yellow } else { Color::DarkGray };
+    let border_color = if is_audit {
+        Color::Yellow
+    } else {
+        Color::DarkGray
+    };
 
     let gate = Paragraph::new(lines).block(
         Block::default()
             .title(Span::styled(
                 title,
                 Style::default()
-                    .fg(if is_audit { Color::Yellow } else { Color::White })
+                    .fg(if is_audit {
+                        Color::Yellow
+                    } else {
+                        Color::White
+                    })
                     .add_modifier(Modifier::BOLD),
             ))
             .borders(Borders::ALL)
@@ -735,11 +751,17 @@ fn draw_help_overlay(frame: &mut Frame, area: Rect) {
         )),
         Line::from(vec![
             Span::styled("  f          ", Style::default().fg(Color::Yellow)),
-            Span::styled("Cycle filter: ALL -> DENY -> agent", Style::default().fg(Color::White)),
+            Span::styled(
+                "Cycle filter: ALL -> DENY -> agent",
+                Style::default().fg(Color::White),
+            ),
         ]),
         Line::from(vec![
             Span::styled("  /          ", Style::default().fg(Color::Yellow)),
-            Span::styled("Filter by agent ID (type + Enter)", Style::default().fg(Color::White)),
+            Span::styled(
+                "Filter by agent ID (type + Enter)",
+                Style::default().fg(Color::White),
+            ),
         ]),
         Line::from(vec![
             Span::styled("  c          ", Style::default().fg(Color::Yellow)),
