@@ -5,6 +5,10 @@
 
 #![allow(dead_code)]
 
+pub mod delegation;
+
+pub use delegation::{DelegateError, DelegateErrorCode, DelegateRequest, DelegateResponse};
+
 use serde::{Deserialize, Serialize};
 
 /// Policy effect: allow or deny
