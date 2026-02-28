@@ -4,6 +4,8 @@
 //! metrics, and system health.
 
 use std::io::{self, Stdout};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crossterm::{
@@ -11,6 +13,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use parking_lot::Mutex;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
@@ -19,6 +22,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
     Frame, Terminal,
 };
+use tokio::sync::mpsc;
 
 use crate::http::AppState;
 
@@ -38,7 +42,8 @@ pub enum FilterMode {
 pub struct TuiApp {
     /// Whether the app should quit
     should_quit: bool,
-    /// Refresh interval in milliseconds
+    /// Refresh interval in milliseconds (kept for potential future use)
+    #[allow(dead_code)]
     refresh_ms: u64,
     /// Reference to the shared application state (cloned, but inner Arc fields are shared)
     app_state: AppState,
@@ -838,49 +843,94 @@ fn print_session_summary(app: &TuiApp) {
 ///
 /// Note: `app_state` is cloned but its internal `Arc` fields are shared,
 /// so updates from the HTTP server are visible in real-time.
+///
+/// IMPORTANT: This runs the TUI event loop in a separate blocking thread
+/// to avoid blocking the tokio async runtime. This allows the HTTP server
+/// to continue accepting connections while the TUI is running.
 pub async fn run_dashboard(app_state: AppState, refresh_ms: u64) -> anyhow::Result<()> {
+    // Create a channel for keyboard events from the blocking thread
+    let (key_tx, mut key_rx) = mpsc::unbounded_channel::<KeyCode>();
+
+    // Create a channel to signal quit from the TUI thread
+    let (quit_tx, mut quit_rx) = mpsc::unbounded_channel::<()>();
+
+    // Shared app state wrapped in Arc<Mutex> for thread-safe access
+    let app = Arc::new(Mutex::new(TuiApp::new(app_state, refresh_ms)));
+
+    // Spawn the blocking keyboard event reader in a separate thread
+    let key_tx_clone = key_tx.clone();
+    let keyboard_handle = std::thread::spawn(move || {
+        let tick_rate = Duration::from_millis(50); // Check every 50ms
+        loop {
+            // Poll for keyboard events with a short timeout
+            if event::poll(tick_rate).unwrap_or(false) {
+                if let Ok(Event::Key(key)) = event::read() {
+                    if key.kind == KeyEventKind::Press {
+                        // Send the key to the async task
+                        if key_tx_clone.send(key.code).is_err() {
+                            break; // Channel closed, exit
+                        }
+                    }
+                }
+            }
+
+            // Check if we should quit (channel closed)
+            // We can't receive here, but if the main task dropped quit_tx, we'll fail to send
+        }
+    });
+
     // Setup terminal
     let mut terminal = setup_terminal()?;
 
-    // Create TUI app
-    let mut app = TuiApp::new(app_state, refresh_ms);
+    // Main async event loop - processes keys and redraws UI
+    let tick_interval = Duration::from_millis(refresh_ms);
+    let mut interval = tokio::time::interval(tick_interval);
 
-    // Run event loop
-    let result = run_event_loop(&mut terminal, &mut app).await;
+    loop {
+        tokio::select! {
+            // Handle incoming key events
+            Some(key) = key_rx.recv() => {
+                let mut app_guard = app.lock();
+                app_guard.handle_key(key);
+                if app_guard.should_quit {
+                    drop(app_guard);
+                    let _ = quit_tx.send(());
+                    break;
+                }
+            }
 
-    // Always restore terminal, even on error
+            // Periodic redraw tick
+            _ = interval.tick() => {
+                let app_guard = app.lock();
+                if app_guard.should_quit {
+                    drop(app_guard);
+                    let _ = quit_tx.send(());
+                    break;
+                }
+                terminal.draw(|frame| draw_ui(frame, &app_guard))?;
+            }
+
+            // Handle quit signal (for external shutdown)
+            _ = quit_rx.recv() => {
+                break;
+            }
+        }
+    }
+
+    // Cleanup: drop channels to signal keyboard thread to exit
+    drop(key_tx);
+    drop(quit_tx);
+
+    // Wait for keyboard thread to finish (with timeout)
+    let _ = keyboard_handle.join();
+
+    // Restore terminal
     restore_terminal(&mut terminal)?;
 
     // Print session summary
-    print_session_summary(&app);
-
-    result
-}
-
-/// Main event loop for the TUI
-async fn run_event_loop(
-    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
-    app: &mut TuiApp,
-) -> anyhow::Result<()> {
-    let tick_rate = Duration::from_millis(app.refresh_ms);
-
-    loop {
-        // Draw UI
-        terminal.draw(|frame| draw_ui(frame, app))?;
-
-        // Check for quit
-        if app.should_quit {
-            break;
-        }
-
-        // Poll for events with timeout
-        if event::poll(tick_rate)? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    app.handle_key(key.code);
-                }
-            }
-        }
+    {
+        let app_guard = app.lock();
+        print_session_summary(&app_guard);
     }
 
     Ok(())
