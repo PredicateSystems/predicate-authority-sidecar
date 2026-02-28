@@ -35,7 +35,7 @@ Predicate Authority adds a **deterministic policy layer** between your agent and
 
 Watch authorization decisions in real-time with the built-in TUI:
 
-<video src="https://github.com/user-attachments/assets/cbe6cbc8-96bd-45e4-a790-549be5b80131" autoplay loop muted playsinline controls width="100%"></video>
+![TUI Dashboard](docs/assets/tui.gif)
 
 ```bash
 ./predicate-authorityd --policy-file policy.json dashboard
