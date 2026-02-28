@@ -169,6 +169,9 @@ pub struct AuthoritySyncSnapshot {
     pub policy_document: Option<serde_json::Value>,
     #[serde(default)]
     pub revocations: Vec<RemoteRevocation>,
+    /// Flattened list of revoked mandate IDs (for delegation chain revocation)
+    #[serde(default)]
+    pub revoked_mandate_ids: Vec<String>,
 }
 
 /// Control-plane client statistics
@@ -471,6 +474,8 @@ pub struct RevocationCache {
     by_intent: Arc<RwLock<HashMap<String, RemoteRevocation>>>,
     /// Tag -> list of revocation records
     by_tag: Arc<RwLock<HashMap<String, Vec<RemoteRevocation>>>>,
+    /// Mandate ID -> revoked (for delegation chain revocation)
+    by_mandate_id: Arc<RwLock<std::collections::HashSet<String>>>,
     /// Last update timestamp
     last_updated: Arc<RwLock<Option<i64>>>,
 }
@@ -481,12 +486,22 @@ impl RevocationCache {
             by_principal: Arc::new(RwLock::new(HashMap::new())),
             by_intent: Arc::new(RwLock::new(HashMap::new())),
             by_tag: Arc::new(RwLock::new(HashMap::new())),
+            by_mandate_id: Arc::new(RwLock::new(std::collections::HashSet::new())),
             last_updated: Arc::new(RwLock::new(None)),
         }
     }
 
-    /// Update cache from sync snapshot
+    /// Update cache from sync snapshot (revocations only, legacy method)
     pub async fn update_from_snapshot(&self, revocations: &[RemoteRevocation]) {
+        self.update_from_full_snapshot(revocations, &[]).await;
+    }
+
+    /// Update cache from full sync snapshot including mandate IDs
+    pub async fn update_from_full_snapshot(
+        &self,
+        revocations: &[RemoteRevocation],
+        revoked_mandate_ids: &[String],
+    ) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -495,11 +510,13 @@ impl RevocationCache {
         let mut by_principal = self.by_principal.write().await;
         let mut by_intent = self.by_intent.write().await;
         let mut by_tag = self.by_tag.write().await;
+        let mut by_mandate_id = self.by_mandate_id.write().await;
 
         // Clear existing entries
         by_principal.clear();
         by_intent.clear();
         by_tag.clear();
+        by_mandate_id.clear();
 
         for revocation in revocations {
             if let Some(ref principal_id) = revocation.principal_id {
@@ -518,13 +535,19 @@ impl RevocationCache {
             }
         }
 
+        // Add mandate ID revocations
+        for mandate_id in revoked_mandate_ids {
+            by_mandate_id.insert(mandate_id.clone());
+        }
+
         *self.last_updated.write().await = Some(now);
 
         info!(
-            "Revocation cache updated: {} principals, {} intents, {} tags",
+            "Revocation cache updated: {} principals, {} intents, {} tags, {} mandate_ids",
             by_principal.len(),
             by_intent.len(),
-            by_tag.len()
+            by_tag.len(),
+            by_mandate_id.len()
         );
     }
 
@@ -552,20 +575,69 @@ impl RevocationCache {
         result
     }
 
+    /// Check if a mandate ID is revoked (O(1) lookup for delegation chain revocation)
+    pub async fn is_mandate_revoked(&self, mandate_id: &str) -> bool {
+        self.by_mandate_id.read().await.contains(mandate_id)
+    }
+
+    /// Add a single mandate ID to the revocation set
+    pub async fn revoke_mandate(&self, mandate_id: &str) {
+        self.by_mandate_id
+            .write()
+            .await
+            .insert(mandate_id.to_string());
+    }
+
+    /// Add multiple mandate IDs to the revocation set
+    pub async fn revoke_mandates(&self, mandate_ids: &[String]) {
+        let mut set = self.by_mandate_id.write().await;
+        for id in mandate_ids {
+            set.insert(id.clone());
+        }
+    }
+
+    /// Get the count of revoked mandate IDs
+    pub async fn revoked_mandate_count(&self) -> usize {
+        self.by_mandate_id.read().await.len()
+    }
+
     /// Get cache statistics
-    pub async fn stats(&self) -> (usize, usize, usize, Option<i64>) {
+    pub async fn stats(&self) -> RevocationCacheStats {
         let by_principal = self.by_principal.read().await;
         let by_intent = self.by_intent.read().await;
         let by_tag = self.by_tag.read().await;
+        let by_mandate_id = self.by_mandate_id.read().await;
         let last_updated = *self.last_updated.read().await;
 
-        (
-            by_principal.len(),
-            by_intent.len(),
-            by_tag.len(),
+        RevocationCacheStats {
+            principal_count: by_principal.len(),
+            intent_count: by_intent.len(),
+            tag_count: by_tag.len(),
+            mandate_id_count: by_mandate_id.len(),
             last_updated,
+        }
+    }
+
+    /// Legacy stats method for backwards compatibility
+    pub async fn stats_legacy(&self) -> (usize, usize, usize, Option<i64>) {
+        let stats = self.stats().await;
+        (
+            stats.principal_count,
+            stats.intent_count,
+            stats.tag_count,
+            stats.last_updated,
         )
     }
+}
+
+/// Revocation cache statistics
+#[derive(Debug, Clone)]
+pub struct RevocationCacheStats {
+    pub principal_count: usize,
+    pub intent_count: usize,
+    pub tag_count: usize,
+    pub mandate_id_count: usize,
+    pub last_updated: Option<i64>,
 }
 
 impl Default for RevocationCache {
@@ -659,11 +731,43 @@ mod tests {
         assert_eq!(revs.len(), 1);
 
         // Check stats
-        let (principals, intents, tags, updated) = cache.stats().await;
-        assert_eq!(principals, 1);
-        assert_eq!(intents, 1);
-        assert_eq!(tags, 2);
-        assert!(updated.is_some());
+        let stats = cache.stats().await;
+        assert_eq!(stats.principal_count, 1);
+        assert_eq!(stats.intent_count, 1);
+        assert_eq!(stats.tag_count, 2);
+        assert_eq!(stats.mandate_id_count, 0);
+        assert!(stats.last_updated.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_mandate_revocation() {
+        let cache = RevocationCache::new();
+
+        // Initially no mandates are revoked
+        assert!(!cache.is_mandate_revoked("m_abc123").await);
+
+        // Revoke a single mandate
+        cache.revoke_mandate("m_abc123").await;
+        assert!(cache.is_mandate_revoked("m_abc123").await);
+        assert!(!cache.is_mandate_revoked("m_def456").await);
+
+        // Revoke multiple mandates
+        cache
+            .revoke_mandates(&["m_def456".to_string(), "m_ghi789".to_string()])
+            .await;
+        assert!(cache.is_mandate_revoked("m_def456").await);
+        assert!(cache.is_mandate_revoked("m_ghi789").await);
+
+        // Check count
+        assert_eq!(cache.revoked_mandate_count().await, 3);
+
+        // Update from full snapshot (clears and replaces)
+        cache
+            .update_from_full_snapshot(&[], &["m_new".to_string()])
+            .await;
+        assert!(!cache.is_mandate_revoked("m_abc123").await);
+        assert!(cache.is_mandate_revoked("m_new").await);
+        assert_eq!(cache.revoked_mandate_count().await, 1);
     }
 
     #[test]

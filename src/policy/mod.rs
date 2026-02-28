@@ -5,6 +5,10 @@
 
 #![allow(dead_code)]
 
+pub mod subset;
+
+pub use subset::{is_action_subset, is_resource_subset, is_scope_subset};
+
 use glob::Pattern;
 use parking_lot::RwLock;
 use std::sync::Arc;

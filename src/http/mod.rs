@@ -1,5 +1,9 @@
 //! HTTP server and request handlers for the sidecar daemon.
 
+pub mod delegate;
+
+pub use delegate::{delegate_handler, DelegationState};
+
 use axum::{
     extract::{Json, Query, State},
     http::{HeaderMap, StatusCode},
@@ -28,6 +32,7 @@ pub struct AppState {
     pub proof_ledger: Arc<InMemoryProofLedger>,
     pub identity_registry: Option<Arc<LocalIdentityRegistry>>,
     pub idp_bridge: Option<Arc<IdpBridgeProvider>>,
+    pub delegation_state: Option<DelegationState>,
     pub start_time: std::time::Instant,
     pub mode: String,
     pub identity_mode: String,
@@ -40,6 +45,7 @@ impl AppState {
             proof_ledger: Arc::new(InMemoryProofLedger::new()),
             identity_registry: None,
             idp_bridge: None,
+            delegation_state: None,
             start_time: std::time::Instant::now(),
             mode: mode.to_string(),
             identity_mode: "local".to_string(),
@@ -56,6 +62,11 @@ impl AppState {
         self.identity_mode = identity_mode.to_string();
         self
     }
+
+    pub fn with_delegation(mut self, delegation_state: DelegationState) -> Self {
+        self.delegation_state = Some(delegation_state);
+        self
+    }
 }
 
 /// Create the HTTP router with all endpoints
@@ -65,10 +76,20 @@ pub fn create_router(state: AppState) -> Router {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    Router::new()
+    let mut router = Router::new()
         // Core authorization
         .route("/v1/authorize", post(authorize_handler))
-        .route("/authorize", post(authorize_handler)) // Legacy alias
+        .route("/authorize", post(authorize_handler)); // Legacy alias
+
+    // Add delegation endpoint if delegation state is configured
+    if let Some(delegation_state) = state.delegation_state.clone() {
+        router = router.route(
+            "/v1/delegate",
+            post(delegate_handler).with_state(delegation_state),
+        );
+    }
+
+    router
         // Operations
         .route("/health", get(health_handler))
         .route("/status", get(status_handler))
@@ -86,6 +107,15 @@ pub fn create_router(state: AppState) -> Router {
         .route("/ledger/requeue", post(ledger_requeue_handler))
         .layer(cors)
         .with_state(state)
+}
+
+/// Create a standalone delegation router.
+///
+/// This can be merged into an existing router when delegation support is needed.
+pub fn create_delegation_router(delegation_state: DelegationState) -> Router<()> {
+    Router::new()
+        .route("/v1/delegate", post(delegate_handler))
+        .with_state(delegation_state)
 }
 
 // --- Authorization ---
