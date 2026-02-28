@@ -17,11 +17,11 @@ But IdP scopes are coarse-grained. If a prompt injection tricks your agent into 
 Predicate Authority adds a **deterministic policy layer** between your agent and your tools. Every action is evaluated in <1ms against explicit ALLOW/DENY rules before execution.
 
 ```
-┌─────────────┐     ┌──────────────────────┐     ┌─────────────┐
-│  AI Agent   │────▶│  predicate-authorityd │────▶│  Your Tools │
-│             │     │      (Sidecar)        │     │             │
-│  "Click X"  │     │  ALLOW/DENY in <1ms   │     │  Execute    │
-└─────────────┘     └──────────────────────┘     └─────────────┘
+┌─────────────┐     ┌─────────────────────┐     ┌─────────────┐
+│  AI Agent   │────▶│ predicate-authorityd│────▶│  Your Tools │
+│             │     │      (Sidecar)      │     │             │
+│  "Click X"  │     │  ALLOW/DENY in <1ms │     │  Execute    │
+└─────────────┘     └─────────────────────┘     └─────────────┘
 ```
 
 - **Fail-closed**: No matching rule = DENY
