@@ -105,6 +105,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/ledger/flush-now", post(ledger_flush_now_handler))
         .route("/ledger/dead-letter", get(ledger_dead_letter_handler))
         .route("/ledger/requeue", post(ledger_requeue_handler))
+        // Chain integrity endpoints (Merkle hash chain)
+        .route("/ledger/chain-head", get(ledger_chain_head_handler))
+        .route("/ledger/verify", get(ledger_verify_handler))
         .layer(cors)
         .with_state(state)
 }
@@ -673,6 +676,42 @@ async fn ledger_requeue_handler(
             }),
         )
     }
+}
+
+// --- Chain Integrity Endpoints (Merkle Hash Chain) ---
+
+use crate::proof::ChainHead;
+
+/// Get the current chain head for verification.
+/// This allows external systems (control plane) to verify the integrity of the audit trail.
+async fn ledger_chain_head_handler(State(state): State<AppState>) -> Json<ChainHead> {
+    Json(state.proof_ledger.chain_head())
+}
+
+#[derive(Serialize)]
+struct ChainVerifyResponse {
+    valid: bool,
+    chain_hash: String,
+    event_count: u64,
+    message: String,
+}
+
+/// Verify the integrity of the local hash chain.
+/// Returns true if no tampering is detected.
+async fn ledger_verify_handler(State(state): State<AppState>) -> Json<ChainVerifyResponse> {
+    let valid = state.proof_ledger.verify_chain();
+    let head = state.proof_ledger.chain_head();
+
+    Json(ChainVerifyResponse {
+        valid,
+        chain_hash: head.chain_hash,
+        event_count: head.event_count,
+        message: if valid {
+            "Chain integrity verified".to_string()
+        } else {
+            "TAMPERING DETECTED: Chain integrity check failed".to_string()
+        },
+    })
 }
 
 #[cfg(test)]

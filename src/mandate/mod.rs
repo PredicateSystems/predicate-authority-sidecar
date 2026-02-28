@@ -2,6 +2,11 @@
 //!
 //! Supports ES256 (ECDSA P-256) and HS256 (HMAC-SHA256) algorithms.
 //!
+//! # Security: Secret Zeroization
+//!
+//! This module uses the `zeroize` crate to securely erase sensitive key material
+//! from memory when it is dropped. This helps protect against memory disclosure
+//! attacks and ensures secrets don't linger in memory longer than necessary.
 
 #![allow(dead_code)]
 
@@ -14,6 +19,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::models::{ActionRequest, MandateClaims, SignedMandate};
 
@@ -35,10 +41,25 @@ impl SigningAlgorithm {
     }
 }
 
-/// Key material for signing and verification
+/// Wrapper for secret key bytes that securely zeroizes on drop.
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
+struct SecretKeyBytes(Vec<u8>);
+
+impl std::ops::Deref for SecretKeyBytes {
+    type Target = [u8];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+/// Key material for signing and verification.
+/// The secret_key is automatically zeroized when this struct is dropped.
 struct SigningKeyMaterial {
-    secret_key: Vec<u8>,
+    /// Secret key bytes, automatically zeroized on drop
+    secret_key: SecretKeyBytes,
+    /// ECDSA signing key derived from the secret
     signing_key: SigningKey,
+    /// Public verification key
     verifying_key: VerifyingKey,
 }
 
@@ -66,7 +87,7 @@ impl SigningKeyMaterial {
         let verifying_key = *signing_key.verifying_key();
 
         Self {
-            secret_key: secret_bytes.to_vec(),
+            secret_key: SecretKeyBytes(secret_bytes.to_vec()),
             signing_key,
             verifying_key,
         }
