@@ -289,7 +289,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn test_first_match_wins_deny() {
         // With first-match-wins, place DENY rules before ALLOW rules for deny-overrides behavior
         let engine = PolicyEngine::with_rules(vec![
