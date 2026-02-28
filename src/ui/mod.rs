@@ -32,6 +32,12 @@ pub struct TuiApp {
     app_state: AppState,
     /// Start time for uptime calculation
     start_time: std::time::Instant,
+    /// Scroll offset for the event list
+    scroll_offset: usize,
+    /// Whether the help overlay is visible
+    show_help: bool,
+    /// Whether updates are paused
+    paused: bool,
 }
 
 impl TuiApp {
@@ -42,14 +48,54 @@ impl TuiApp {
             refresh_ms,
             app_state,
             start_time: std::time::Instant::now(),
+            scroll_offset: 0,
+            show_help: false,
+            paused: false,
         }
     }
 
     /// Handle keyboard input
     fn handle_key(&mut self, key: KeyCode) {
+        // Help overlay takes priority
+        if self.show_help {
+            match key {
+                KeyCode::Char('?') | KeyCode::Esc => {
+                    self.show_help = false;
+                }
+                _ => {}
+            }
+            return;
+        }
+
         match key {
+            // Quit
             KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
                 self.should_quit = true;
+            }
+            // Scroll down
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.scroll_offset = self.scroll_offset.saturating_add(1);
+            }
+            // Scroll up
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.scroll_offset = self.scroll_offset.saturating_sub(1);
+            }
+            // Jump to top
+            KeyCode::Char('g') => {
+                self.scroll_offset = 0;
+            }
+            // Jump to bottom
+            KeyCode::Char('G') => {
+                let event_count = self.app_state.proof_ledger.event_count();
+                self.scroll_offset = event_count.saturating_sub(1);
+            }
+            // Toggle help
+            KeyCode::Char('?') => {
+                self.show_help = true;
+            }
+            // Toggle pause
+            KeyCode::Char('p') | KeyCode::Char('P') => {
+                self.paused = !self.paused;
             }
             _ => {}
         }
@@ -118,6 +164,11 @@ fn draw_ui(frame: &mut Frame, app: &TuiApp) {
 
     // Draw footer
     draw_footer(frame, chunks[2], app);
+
+    // Draw help overlay if visible
+    if app.show_help {
+        draw_help_overlay(frame, size);
+    }
 }
 
 /// Draw the header bar
@@ -125,9 +176,16 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &TuiApp) {
     let version = env!("CARGO_PKG_VERSION");
     let uptime = app.uptime_str();
 
-    // Get stats from app state (unused for now, reserved for future header info)
+    // Get stats from app state
     let _stats = app.app_state.proof_ledger.stats();
     let rule_count = app.app_state.policy_engine.rule_count();
+
+    // Status indicator
+    let (status_text, status_color) = if app.paused {
+        ("PAUSED", Color::Yellow)
+    } else {
+        ("LIVE", Color::Green)
+    };
 
     let header_text = vec![
         Line::from(vec![
@@ -137,14 +195,19 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &TuiApp) {
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::raw("          "),
+            Span::raw("      "),
             Span::styled("MODE: ", Style::default().fg(Color::DarkGray)),
             Span::styled("strict", Style::default().fg(Color::Yellow)),
-            Span::raw("    "),
+            Span::raw("  "),
+            Span::styled(
+                format!("[{}]", status_text),
+                Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
             Span::styled("UPTIME: ", Style::default().fg(Color::DarkGray)),
             Span::styled(uptime, Style::default().fg(Color::Green)),
             Span::raw("  "),
-            Span::styled("[?]", Style::default().fg(Color::DarkGray)),
+            Span::styled("[?:help]", Style::default().fg(Color::DarkGray)),
         ]),
         Line::from(vec![
             Span::styled("  Policy: ", Style::default().fg(Color::DarkGray)),
@@ -155,8 +218,8 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &TuiApp) {
                 format!("{} active", rule_count),
                 Style::default().fg(Color::White),
             ),
-            Span::raw("          "),
-            Span::styled("[Q: quit]", Style::default().fg(Color::DarkGray)),
+            Span::raw("      "),
+            Span::styled("[Q:quit P:pause j/k:scroll]", Style::default().fg(Color::DarkGray)),
         ]),
     ];
 
@@ -171,8 +234,8 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &TuiApp) {
 
 /// Draw the live authority gate (left pane)
 fn draw_authority_gate(frame: &mut Frame, area: Rect, app: &TuiApp) {
-    // Get recent events from the ledger
-    let recent_events = app.app_state.proof_ledger.recent_events(20);
+    // Get recent events from the ledger (get more to allow scrolling)
+    let recent_events = app.app_state.proof_ledger.recent_events(100);
 
     let mut lines: Vec<Line> = Vec::new();
 
@@ -182,7 +245,12 @@ fn draw_authority_gate(frame: &mut Frame, area: Rect, app: &TuiApp) {
             Style::default().fg(Color::DarkGray),
         )));
     } else {
-        for event in recent_events.iter().take(area.height.saturating_sub(2) as usize) {
+        // Apply scroll offset and limit to visible area
+        let visible_count = (area.height.saturating_sub(2) / 4) as usize; // 4 lines per event
+        let scroll = app.scroll_offset.min(recent_events.len().saturating_sub(1));
+        let visible_events = recent_events.iter().skip(scroll).take(visible_count);
+
+        for event in visible_events {
             let (status, status_style) = if event.allowed {
                 (
                     "[ \u{2713} ALLOW ]",
@@ -248,10 +316,17 @@ fn draw_authority_gate(frame: &mut Frame, area: Rect, app: &TuiApp) {
         }
     }
 
+    // Show scroll indicator in title if scrolled
+    let title = if app.scroll_offset > 0 {
+        format!(" LIVE AUTHORITY GATE [{}/{}] ", app.scroll_offset + 1, recent_events.len())
+    } else {
+        " LIVE AUTHORITY GATE ".to_string()
+    };
+
     let gate = Paragraph::new(lines).block(
         Block::default()
             .title(Span::styled(
-                " LIVE AUTHORITY GATE ",
+                title,
                 Style::default()
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD),
@@ -416,6 +491,78 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &TuiApp) {
     );
 
     frame.render_widget(footer, area);
+}
+
+/// Draw the help overlay modal
+fn draw_help_overlay(frame: &mut Frame, area: Rect) {
+    // Center the help box
+    let help_width = 50;
+    let help_height = 14;
+    let x = (area.width.saturating_sub(help_width)) / 2;
+    let y = (area.height.saturating_sub(help_height)) / 2;
+    let help_area = Rect::new(x, y, help_width, help_height);
+
+    // Clear the area behind the overlay
+    let clear = Block::default().style(Style::default().bg(Color::Black));
+    frame.render_widget(clear, help_area);
+
+    let help_text = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "  KEYBOARD SHORTCUTS",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Q / Esc    ", Style::default().fg(Color::Yellow)),
+            Span::styled("Quit dashboard", Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled("  j / \u{2193}      ", Style::default().fg(Color::Yellow)),
+            Span::styled("Scroll down", Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled("  k / \u{2191}      ", Style::default().fg(Color::Yellow)),
+            Span::styled("Scroll up", Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled("  g          ", Style::default().fg(Color::Yellow)),
+            Span::styled("Jump to newest", Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled("  G          ", Style::default().fg(Color::Yellow)),
+            Span::styled("Jump to oldest", Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled("  P          ", Style::default().fg(Color::Yellow)),
+            Span::styled("Pause/Resume updates", Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled("  ?          ", Style::default().fg(Color::Yellow)),
+            Span::styled("Toggle this help", Style::default().fg(Color::White)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Press ? or Esc to close",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    let help = Paragraph::new(help_text).block(
+        Block::default()
+            .title(Span::styled(
+                " HELP ",
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan)),
+    );
+
+    frame.render_widget(help, help_area);
 }
 
 /// Print session summary after TUI exits
