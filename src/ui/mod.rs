@@ -851,31 +851,33 @@ pub async fn run_dashboard(app_state: AppState, refresh_ms: u64) -> anyhow::Resu
     // Create a channel for keyboard events from the blocking thread
     let (key_tx, mut key_rx) = mpsc::unbounded_channel::<KeyCode>();
 
-    // Create a channel to signal quit from the TUI thread
-    let (quit_tx, mut quit_rx) = mpsc::unbounded_channel::<()>();
+    // Atomic flag to signal the keyboard thread to exit
+    let should_exit = Arc::new(AtomicBool::new(false));
+    let should_exit_clone = Arc::clone(&should_exit);
 
     // Shared app state wrapped in Arc<Mutex> for thread-safe access
     let app = Arc::new(Mutex::new(TuiApp::new(app_state, refresh_ms)));
 
     // Spawn the blocking keyboard event reader in a separate thread
-    let key_tx_clone = key_tx.clone();
     let keyboard_handle = std::thread::spawn(move || {
         let tick_rate = Duration::from_millis(50); // Check every 50ms
         loop {
+            // Check if we should exit
+            if should_exit_clone.load(Ordering::Relaxed) {
+                break;
+            }
+
             // Poll for keyboard events with a short timeout
             if event::poll(tick_rate).unwrap_or(false) {
                 if let Ok(Event::Key(key)) = event::read() {
                     if key.kind == KeyEventKind::Press {
                         // Send the key to the async task
-                        if key_tx_clone.send(key.code).is_err() {
+                        if key_tx.send(key.code).is_err() {
                             break; // Channel closed, exit
                         }
                     }
                 }
             }
-
-            // Check if we should quit (channel closed)
-            // We can't receive here, but if the main task dropped quit_tx, we'll fail to send
         }
     });
 
@@ -893,8 +895,6 @@ pub async fn run_dashboard(app_state: AppState, refresh_ms: u64) -> anyhow::Resu
                 let mut app_guard = app.lock();
                 app_guard.handle_key(key);
                 if app_guard.should_quit {
-                    drop(app_guard);
-                    let _ = quit_tx.send(());
                     break;
                 }
             }
@@ -903,25 +903,17 @@ pub async fn run_dashboard(app_state: AppState, refresh_ms: u64) -> anyhow::Resu
             _ = interval.tick() => {
                 let app_guard = app.lock();
                 if app_guard.should_quit {
-                    drop(app_guard);
-                    let _ = quit_tx.send(());
                     break;
                 }
                 terminal.draw(|frame| draw_ui(frame, &app_guard))?;
             }
-
-            // Handle quit signal (for external shutdown)
-            _ = quit_rx.recv() => {
-                break;
-            }
         }
     }
 
-    // Cleanup: drop channels to signal keyboard thread to exit
-    drop(key_tx);
-    drop(quit_tx);
+    // Signal keyboard thread to exit
+    should_exit.store(true, Ordering::Relaxed);
 
-    // Wait for keyboard thread to finish (with timeout)
+    // Wait for keyboard thread to finish (it will exit within 50ms due to poll timeout)
     let _ = keyboard_handle.join();
 
     // Restore terminal
