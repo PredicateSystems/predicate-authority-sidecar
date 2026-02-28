@@ -1,0 +1,67 @@
+{
+  "$schema": "../schemas/policy.schema.json",
+  "description": "Demo policy for marketing screenshots - shows hallucination intercept scenario",
+  "rules": [
+    {
+      "name": "block-ssh-keys",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["fs.read", "fs.write", "fs.*"],
+      "resources": [
+        "*/.ssh/*",
+        "~/.ssh/*",
+        "/home/*/.ssh/*",
+        "/Users/*/.ssh/*"
+      ]
+    },
+    {
+      "name": "block-dangerous-downloads",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["bash.execute", "shell.exec", "exec"],
+      "resources": [
+        "curl*|*bash*",
+        "curl*|*sh*",
+        "wget*|*bash*",
+        "wget*|*sh*",
+        "*evil.com*",
+        "*exfil*",
+        "*malicious*"
+      ]
+    },
+    {
+      "name": "block-sensitive-env",
+      "effect": "deny",
+      "principals": ["*"],
+      "actions": ["fs.read", "fs.*"],
+      "resources": [
+        "**/.env",
+        "**/.env.*",
+        "**/credentials*",
+        "**/*.pem",
+        "**/*.key"
+      ]
+    },
+    {
+      "name": "allow-browser-navigation",
+      "effect": "allow",
+      "principals": ["agent:*"],
+      "actions": ["browser.navigate", "browser.goto"],
+      "resources": ["https://*", "http://*"]
+    },
+    {
+      "name": "allow-browser-interactions",
+      "effect": "allow",
+      "principals": ["agent:*"],
+      "actions": ["browser.click", "browser.type", "browser.fill", "browser.scroll", "browser.wait"],
+      "resources": ["*"]
+    },
+    {
+      "name": "allow-api-requests",
+      "effect": "allow",
+      "principals": ["agent:*"],
+      "actions": ["http.get", "http.post", "http.put", "http.patch", "http.delete"],
+      "resources": ["https://*"]
+    }
+  ]
+}
