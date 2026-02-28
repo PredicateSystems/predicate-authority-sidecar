@@ -35,7 +35,7 @@ Predicate Authority adds a **deterministic policy layer** between your agent and
 
 Watch authorization decisions in real-time with the built-in TUI:
 
-![TUI Dashboard](docs/assets/tui-demo.gif)
+![TUI Dashboard](docs/assets/tui.gif)
 
 ```bash
 ./predicate-authorityd --policy-file policy.json dashboard
@@ -43,7 +43,7 @@ Watch authorization decisions in real-time with the built-in TUI:
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│  PREDICATE AUTHORITY v0.5.0    MODE: strict  [LIVE]  UPTIME: 2h 34m  [?]  │
+│  PREDICATE AUTHORITY v0.5.1    MODE: strict  [LIVE]  UPTIME: 2h 34m  [?]  │
 │  Policy: loaded                Rules: 12 active      [Q:quit P:pause]     │
 ├─────────────────────────────────────────┬──────────────────────────────────┤
 │  LIVE AUTHORITY GATE                    │  METRICS                         │
