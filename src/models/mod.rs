@@ -261,9 +261,9 @@ pub struct SidecarAuthorizeRequest {
 pub struct SidecarAuthorizeResponse {
     pub allowed: bool,
     pub reason: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Always serialized (as null or string) for SDK compatibility
     pub mandate_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Always serialized (as null or string) for SDK compatibility
     pub violated_rule: Option<String>,
     #[serde(default)]
     pub missing_labels: Vec<String>,
