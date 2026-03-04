@@ -775,3 +775,436 @@ mod tests {
         assert!(verified.is_none());
     }
 }
+
+// =============================================================================
+// MandateStore - In-memory mandate storage for execution proxying
+// =============================================================================
+
+/// Stored mandate with metadata
+#[derive(Debug, Clone)]
+pub struct StoredMandate {
+    /// The signed mandate
+    pub mandate: SignedMandate,
+    /// When the mandate was stored
+    pub stored_at: i64,
+    /// Whether the mandate has been used for execution
+    pub executed: bool,
+    /// Execution timestamp if executed
+    pub executed_at: Option<i64>,
+}
+
+impl StoredMandate {
+    /// Check if the mandate has expired
+    pub fn is_expired(&self) -> bool {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        self.mandate.claims.expires_at_epoch_s < now
+    }
+
+    /// Get the mandate's action
+    pub fn action(&self) -> &str {
+        &self.mandate.claims.action
+    }
+
+    /// Get the mandate's resource
+    pub fn resource(&self) -> &str {
+        &self.mandate.claims.resource
+    }
+
+    /// Get the mandate's principal
+    pub fn principal(&self) -> &str {
+        &self.mandate.claims.principal_id
+    }
+}
+
+/// Configuration for MandateStore
+#[derive(Debug, Clone)]
+pub struct MandateStoreConfig {
+    /// Maximum number of mandates to store
+    pub max_capacity: usize,
+    /// Whether to automatically evict expired mandates
+    pub auto_evict_expired: bool,
+}
+
+impl Default for MandateStoreConfig {
+    fn default() -> Self {
+        Self {
+            max_capacity: 10_000,
+            auto_evict_expired: true,
+        }
+    }
+}
+
+/// In-memory mandate store for execution proxying.
+///
+/// This store holds issued mandates so they can be validated during
+/// execution requests. Mandates are keyed by their mandate_id.
+pub struct MandateStore {
+    mandates: RwLock<HashMap<String, StoredMandate>>,
+    config: MandateStoreConfig,
+}
+
+impl MandateStore {
+    /// Create a new mandate store with default configuration
+    pub fn new() -> Self {
+        Self::with_config(MandateStoreConfig::default())
+    }
+
+    /// Create a new mandate store with custom configuration
+    pub fn with_config(config: MandateStoreConfig) -> Self {
+        Self {
+            mandates: RwLock::new(HashMap::new()),
+            config,
+        }
+    }
+
+    /// Store a mandate. Returns the mandate_id.
+    pub fn store(&self, mandate: SignedMandate) -> String {
+        let mandate_id = mandate.claims.mandate_id.clone();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let stored = StoredMandate {
+            mandate,
+            stored_at: now,
+            executed: false,
+            executed_at: None,
+        };
+
+        let mut mandates = self.mandates.write();
+
+        // Evict expired mandates if at capacity
+        if mandates.len() >= self.config.max_capacity && self.config.auto_evict_expired {
+            self.evict_expired_internal(&mut mandates);
+        }
+
+        // If still at capacity, evict oldest
+        if mandates.len() >= self.config.max_capacity {
+            self.evict_oldest_internal(&mut mandates);
+        }
+
+        mandates.insert(mandate_id.clone(), stored);
+        mandate_id
+    }
+
+    /// Get a mandate by ID (does not check expiration)
+    pub fn get(&self, mandate_id: &str) -> Option<StoredMandate> {
+        let mandates = self.mandates.read();
+        mandates.get(mandate_id).cloned()
+    }
+
+    /// Get a mandate by ID, returning None if expired
+    pub fn get_valid(&self, mandate_id: &str) -> Option<StoredMandate> {
+        let mandates = self.mandates.read();
+        mandates.get(mandate_id).and_then(|stored| {
+            if stored.is_expired() {
+                None
+            } else {
+                Some(stored.clone())
+            }
+        })
+    }
+
+    /// Mark a mandate as executed
+    pub fn mark_executed(&self, mandate_id: &str) -> bool {
+        let mut mandates = self.mandates.write();
+        if let Some(stored) = mandates.get_mut(mandate_id) {
+            stored.executed = true;
+            stored.executed_at = Some(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64,
+            );
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Remove a mandate
+    pub fn remove(&self, mandate_id: &str) -> bool {
+        let mut mandates = self.mandates.write();
+        mandates.remove(mandate_id).is_some()
+    }
+
+    /// Get the number of stored mandates
+    pub fn len(&self) -> usize {
+        self.mandates.read().len()
+    }
+
+    /// Check if the store is empty
+    pub fn is_empty(&self) -> bool {
+        self.mandates.read().is_empty()
+    }
+
+    /// Evict all expired mandates
+    pub fn evict_expired(&self) -> usize {
+        let mut mandates = self.mandates.write();
+        self.evict_expired_internal(&mut mandates)
+    }
+
+    /// List all mandate IDs
+    pub fn list_ids(&self) -> Vec<String> {
+        self.mandates.read().keys().cloned().collect()
+    }
+
+    /// Get store statistics
+    pub fn stats(&self) -> MandateStoreStats {
+        let mandates = self.mandates.read();
+        let total = mandates.len();
+        let mut expired = 0;
+        let mut executed = 0;
+
+        for stored in mandates.values() {
+            if stored.is_expired() {
+                expired += 1;
+            }
+            if stored.executed {
+                executed += 1;
+            }
+        }
+
+        MandateStoreStats {
+            total,
+            expired,
+            executed,
+            capacity: self.config.max_capacity,
+        }
+    }
+
+    fn evict_expired_internal(&self, mandates: &mut HashMap<String, StoredMandate>) -> usize {
+        let expired_ids: Vec<String> = mandates
+            .iter()
+            .filter(|(_, v)| v.is_expired())
+            .map(|(k, _)| k.clone())
+            .collect();
+
+        let count = expired_ids.len();
+        for id in expired_ids {
+            mandates.remove(&id);
+        }
+        count
+    }
+
+    fn evict_oldest_internal(&self, mandates: &mut HashMap<String, StoredMandate>) {
+        if let Some((oldest_id, _)) = mandates
+            .iter()
+            .min_by_key(|(_, v)| v.stored_at)
+            .map(|(k, v)| (k.clone(), v.clone()))
+        {
+            mandates.remove(&oldest_id);
+        }
+    }
+}
+
+impl Default for MandateStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Statistics for mandate store
+#[derive(Debug, Clone, Serialize)]
+pub struct MandateStoreStats {
+    pub total: usize,
+    pub expired: usize,
+    pub executed: usize,
+    pub capacity: usize,
+}
+
+#[cfg(test)]
+mod mandate_store_tests {
+    use super::*;
+
+    fn create_test_mandate(
+        mandate_id: &str,
+        action: &str,
+        resource: &str,
+        expires_at: i64,
+    ) -> SignedMandate {
+        SignedMandate {
+            token: format!("test-token-{}", mandate_id),
+            claims: MandateClaims {
+                mandate_id: mandate_id.to_string(),
+                principal_id: "agent:test".to_string(),
+                action: action.to_string(),
+                resource: resource.to_string(),
+                intent_hash: "hash123".to_string(),
+                state_hash: "state123".to_string(),
+                issued_at_epoch_s: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64,
+                expires_at_epoch_s: expires_at,
+                delegated_by: None,
+                parent_mandate_id: None,
+                delegation_depth: 0,
+                delegation_chain_hash: Some("chain123".to_string()),
+                iss: Some("test".to_string()),
+                aud: Some("test".to_string()),
+                sub: Some("agent:test".to_string()),
+                iat: None,
+                exp: Some(expires_at),
+                nbf: None,
+                jti: Some(mandate_id.to_string()),
+            },
+            signature: "test-signature".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_store_and_get() {
+        let store = MandateStore::new();
+        let expires = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+            + 300; // 5 minutes from now
+
+        let mandate = create_test_mandate("m_123", "fs.read", "/src/file.ts", expires);
+        let id = store.store(mandate);
+
+        assert_eq!(id, "m_123");
+        assert_eq!(store.len(), 1);
+
+        let stored = store.get("m_123");
+        assert!(stored.is_some());
+        let stored = stored.unwrap();
+        assert_eq!(stored.action(), "fs.read");
+        assert_eq!(stored.resource(), "/src/file.ts");
+        assert!(!stored.executed);
+    }
+
+    #[test]
+    fn test_get_valid_returns_none_for_expired() {
+        let store = MandateStore::new();
+        let expires = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+            - 10; // Already expired
+
+        let mandate = create_test_mandate("m_expired", "fs.read", "/src/file.ts", expires);
+        store.store(mandate);
+
+        // get() should still return it
+        assert!(store.get("m_expired").is_some());
+
+        // get_valid() should return None
+        assert!(store.get_valid("m_expired").is_none());
+    }
+
+    #[test]
+    fn test_mark_executed() {
+        let store = MandateStore::new();
+        let expires = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+            + 300;
+
+        let mandate = create_test_mandate("m_exec", "fs.write", "/tmp/output.txt", expires);
+        store.store(mandate);
+
+        assert!(!store.get("m_exec").unwrap().executed);
+
+        let result = store.mark_executed("m_exec");
+        assert!(result);
+
+        let stored = store.get("m_exec").unwrap();
+        assert!(stored.executed);
+        assert!(stored.executed_at.is_some());
+    }
+
+    #[test]
+    fn test_remove() {
+        let store = MandateStore::new();
+        let expires = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+            + 300;
+
+        let mandate = create_test_mandate("m_remove", "cli.exec", "ls", expires);
+        store.store(mandate);
+
+        assert_eq!(store.len(), 1);
+
+        let removed = store.remove("m_remove");
+        assert!(removed);
+        assert_eq!(store.len(), 0);
+        assert!(store.get("m_remove").is_none());
+    }
+
+    #[test]
+    fn test_evict_expired() {
+        let store = MandateStore::new();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        // Store one expired and one valid mandate
+        let expired = create_test_mandate("m_old", "fs.read", "/old", now - 10);
+        let valid = create_test_mandate("m_new", "fs.read", "/new", now + 300);
+
+        store.store(expired);
+        store.store(valid);
+
+        assert_eq!(store.len(), 2);
+
+        let evicted = store.evict_expired();
+        assert_eq!(evicted, 1);
+        assert_eq!(store.len(), 1);
+        assert!(store.get("m_old").is_none());
+        assert!(store.get("m_new").is_some());
+    }
+
+    #[test]
+    fn test_capacity_eviction() {
+        let config = MandateStoreConfig {
+            max_capacity: 2,
+            auto_evict_expired: true,
+        };
+        let store = MandateStore::with_config(config);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        // Store 3 mandates with capacity of 2
+        store.store(create_test_mandate("m_1", "a", "r1", now + 300));
+        store.store(create_test_mandate("m_2", "a", "r2", now + 300));
+        store.store(create_test_mandate("m_3", "a", "r3", now + 300));
+
+        // Should have evicted oldest
+        assert_eq!(store.len(), 2);
+        // m_3 should exist, one of m_1 or m_2 should have been evicted
+        assert!(store.get("m_3").is_some());
+    }
+
+    #[test]
+    fn test_stats() {
+        let store = MandateStore::new();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        store.store(create_test_mandate("m_1", "a", "r1", now + 300));
+        store.store(create_test_mandate("m_2", "a", "r2", now - 10)); // expired
+        store.store(create_test_mandate("m_3", "a", "r3", now + 300));
+        store.mark_executed("m_1");
+
+        let stats = store.stats();
+        assert_eq!(stats.total, 3);
+        assert_eq!(stats.expired, 1);
+        assert_eq!(stats.executed, 1);
+        assert_eq!(stats.capacity, 10_000);
+    }
+}
