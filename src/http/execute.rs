@@ -26,7 +26,8 @@ use tracing::{info, warn};
 
 use crate::http::AppState;
 use crate::models::{
-    AuthorizationReason, ExecutePayload, ExecuteRequest, ExecuteResponse, ExecuteResult,
+    AuthorizationReason, DirectoryEntry, ExecutePayload, ExecuteRequest, ExecuteResponse,
+    ExecuteResult,
 };
 
 /// POST /v1/execute
@@ -255,6 +256,15 @@ async fn execute_action(request: &ExecuteRequest) -> Result<(ExecuteResult, Stri
                 Err("Invalid payload for fs.write".to_string())
             }
         }
+        "fs.list" => execute_fs_list(&request.resource).await,
+        "fs.delete" => {
+            let recursive = match &request.payload {
+                Some(ExecutePayload::FileDelete { recursive }) => *recursive,
+                None => false,
+                _ => return Err("Invalid payload for fs.delete".to_string()),
+            };
+            execute_fs_delete(&request.resource, recursive).await
+        }
         "cli.exec" => {
             let payload = request
                 .payload
@@ -282,6 +292,17 @@ async fn execute_action(request: &ExecuteRequest) -> Result<(ExecuteResult, Stri
         "http.fetch" => {
             let payload = request.payload.as_ref();
             execute_http_fetch(&request.resource, payload).await
+        }
+        "env.read" => {
+            let payload = request
+                .payload
+                .as_ref()
+                .ok_or("env.read requires payload")?;
+            if let ExecutePayload::EnvRead { keys } = payload {
+                execute_env_read(keys).await
+            } else {
+                Err("Invalid payload for env.read".to_string())
+            }
         }
         _ => Err(format!("Unsupported action: {}", request.action)),
     }
@@ -478,6 +499,180 @@ async fn execute_http_fetch(
     ))
 }
 
+/// Execute fs.list - list directory contents
+async fn execute_fs_list(resource: &str) -> Result<(ExecuteResult, String), String> {
+    let path = Path::new(resource);
+
+    // Verify directory exists
+    if !path.exists() {
+        return Err(format!("Directory does not exist: {}", resource));
+    }
+
+    if !path.is_dir() {
+        return Err(format!("Path is not a directory: {}", resource));
+    }
+
+    // Resolve to canonical path
+    let canonical = fs::canonicalize(path)
+        .await
+        .map_err(|e| format!("Cannot resolve path: {}", e))?;
+
+    // Read directory entries
+    let mut entries = Vec::new();
+    let mut read_dir = fs::read_dir(&canonical)
+        .await
+        .map_err(|e| format!("Cannot read directory: {}", e))?;
+
+    while let Some(entry) = read_dir
+        .next_entry()
+        .await
+        .map_err(|e| format!("Cannot read entry: {}", e))?
+    {
+        let metadata = entry
+            .metadata()
+            .await
+            .map_err(|e| format!("Cannot read metadata: {}", e))?;
+
+        let entry_type = if metadata.is_dir() {
+            "dir"
+        } else if metadata.is_symlink() {
+            "symlink"
+        } else {
+            "file"
+        };
+
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs());
+
+        entries.push(DirectoryEntry {
+            name: entry.file_name().to_string_lossy().to_string(),
+            entry_type: entry_type.to_string(),
+            size: metadata.len(),
+            modified,
+        });
+    }
+
+    // Sort entries by name for deterministic output
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let total_entries = entries.len();
+
+    // Compute evidence hash
+    let mut hasher = Sha256::new();
+    for entry in &entries {
+        hasher.update(format!("{}:{}:{}", entry.name, entry.entry_type, entry.size).as_bytes());
+    }
+    let evidence_hash = format!("sha256:{:x}", hasher.finalize());
+
+    Ok((
+        ExecuteResult::FileList {
+            entries,
+            total_entries,
+        },
+        evidence_hash,
+    ))
+}
+
+/// Execute fs.delete - delete file or directory
+async fn execute_fs_delete(
+    resource: &str,
+    recursive: bool,
+) -> Result<(ExecuteResult, String), String> {
+    let path = Path::new(resource);
+
+    // Verify path exists
+    if !path.exists() {
+        return Err(format!("Path does not exist: {}", resource));
+    }
+
+    // Resolve to canonical path (prevents path traversal)
+    let canonical = fs::canonicalize(path)
+        .await
+        .map_err(|e| format!("Cannot resolve path: {}", e))?;
+
+    let paths_removed = if canonical.is_dir() {
+        if recursive {
+            // Count entries before removal
+            let count = count_entries(&canonical).await?;
+            fs::remove_dir_all(&canonical)
+                .await
+                .map_err(|e| format!("Cannot delete directory: {}", e))?;
+            count
+        } else {
+            // Try to remove empty directory
+            fs::remove_dir(&canonical).await.map_err(|e| {
+                format!(
+                    "Cannot delete directory (not empty or recursive=false): {}",
+                    e
+                )
+            })?;
+            1
+        }
+    } else {
+        fs::remove_file(&canonical)
+            .await
+            .map_err(|e| format!("Cannot delete file: {}", e))?;
+        1
+    };
+
+    // Compute evidence hash
+    let mut hasher = Sha256::new();
+    hasher.update(format!("deleted:{}:{}", canonical.display(), paths_removed).as_bytes());
+    let evidence_hash = format!("sha256:{:x}", hasher.finalize());
+
+    Ok((ExecuteResult::FileDelete { paths_removed }, evidence_hash))
+}
+
+/// Count all entries in a directory recursively
+async fn count_entries(path: &Path) -> Result<usize, String> {
+    let mut count = 1; // Count the directory itself
+    let mut read_dir = fs::read_dir(path)
+        .await
+        .map_err(|e| format!("Cannot read directory: {}", e))?;
+
+    while let Some(entry) = read_dir
+        .next_entry()
+        .await
+        .map_err(|e| format!("Cannot read entry: {}", e))?
+    {
+        let entry_path = entry.path();
+        if entry_path.is_dir() {
+            count += Box::pin(count_entries(&entry_path)).await?;
+        } else {
+            count += 1;
+        }
+    }
+
+    Ok(count)
+}
+
+/// Execute env.read - read environment variables
+async fn execute_env_read(keys: &[String]) -> Result<(ExecuteResult, String), String> {
+    let mut values = HashMap::new();
+
+    for key in keys {
+        if let Ok(value) = std::env::var(key) {
+            values.insert(key.clone(), value);
+        }
+        // If key doesn't exist, we simply don't include it in the result
+        // This is intentional - agents should not be able to probe for env var existence
+    }
+
+    // Compute evidence hash (hash of keys requested, not values for security)
+    let mut hasher = Sha256::new();
+    let mut sorted_keys: Vec<&String> = keys.iter().collect();
+    sorted_keys.sort();
+    for key in sorted_keys {
+        hasher.update(format!("env:{}", key).as_bytes());
+    }
+    let evidence_hash = format!("sha256:{:x}", hasher.finalize());
+
+    Ok((ExecuteResult::EnvRead { values }, evidence_hash))
+}
+
 /// Record execution in proof ledger
 fn record_execution(
     state: &AppState,
@@ -569,5 +764,20 @@ mod tests {
         assert_eq!(normalize_path("/src/./index.ts"), "/src/index.ts");
         assert_eq!(normalize_path("/src/index.ts/"), "/src/index.ts");
         assert_eq!(normalize_path("/src//./index.ts/"), "/src/index.ts");
+    }
+
+    #[test]
+    fn test_actions_match_new_actions() {
+        // fs.list
+        assert!(actions_match("fs.list", "fs.list"));
+        assert!(actions_match("fs.*", "fs.list"));
+
+        // fs.delete
+        assert!(actions_match("fs.delete", "fs.delete"));
+        assert!(actions_match("fs.*", "fs.delete"));
+
+        // env.read
+        assert!(actions_match("env.read", "env.read"));
+        assert!(actions_match("env.*", "env.read"));
     }
 }

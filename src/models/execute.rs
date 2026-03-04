@@ -35,6 +35,11 @@ pub enum ExecutePayload {
         #[serde(default)]
         append: bool,
     },
+    /// fs.delete payload
+    FileDelete {
+        #[serde(default)]
+        recursive: bool,
+    },
     /// cli.exec payload
     CliExec {
         command: String,
@@ -53,6 +58,8 @@ pub enum ExecutePayload {
         #[serde(skip_serializing_if = "Option::is_none")]
         body: Option<String>,
     },
+    /// env.read payload
+    EnvRead { keys: Vec<String> },
 }
 
 /// POST /v1/execute response
@@ -77,6 +84,17 @@ pub struct ExecuteResponse {
     pub evidence_hash: Option<String>,
 }
 
+/// Directory entry for fs.list result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirectoryEntry {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub entry_type: String, // "file", "dir", "symlink"
+    pub size: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modified: Option<u64>, // Unix timestamp
+}
+
 /// Action-specific results
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -92,6 +110,13 @@ pub enum ExecuteResult {
         bytes_written: u64,
         content_hash: String,
     },
+    /// fs.list result
+    FileList {
+        entries: Vec<DirectoryEntry>,
+        total_entries: usize,
+    },
+    /// fs.delete result
+    FileDelete { paths_removed: usize },
     /// cli.exec result
     CliExec {
         exit_code: i32,
@@ -106,6 +131,8 @@ pub enum ExecuteResult {
         body: String,
         body_hash: String,
     },
+    /// env.read result
+    EnvRead { values: HashMap<String, String> },
 }
 
 /// Execution error types
@@ -378,5 +405,119 @@ mod tests {
             ExecuteErrorCode::InvalidPayload.to_string(),
             "invalid_payload"
         );
+    }
+
+    #[test]
+    fn test_execute_payload_file_delete() {
+        let payload = ExecutePayload::FileDelete { recursive: true };
+
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains(r#""type":"file_delete""#));
+        assert!(json.contains("\"recursive\":true"));
+
+        let parsed: ExecutePayload = serde_json::from_str(&json).unwrap();
+        if let ExecutePayload::FileDelete { recursive } = parsed {
+            assert!(recursive);
+        } else {
+            panic!("Expected FileDelete payload");
+        }
+    }
+
+    #[test]
+    fn test_execute_payload_env_read() {
+        let payload = ExecutePayload::EnvRead {
+            keys: vec!["API_KEY".to_string(), "SECRET".to_string()],
+        };
+
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains(r#""type":"env_read""#));
+        assert!(json.contains("API_KEY"));
+
+        let parsed: ExecutePayload = serde_json::from_str(&json).unwrap();
+        if let ExecutePayload::EnvRead { keys } = parsed {
+            assert_eq!(keys.len(), 2);
+            assert!(keys.contains(&"API_KEY".to_string()));
+        } else {
+            panic!("Expected EnvRead payload");
+        }
+    }
+
+    #[test]
+    fn test_execute_result_file_list() {
+        let entries = vec![
+            DirectoryEntry {
+                name: "file.txt".to_string(),
+                entry_type: "file".to_string(),
+                size: 1024,
+                modified: Some(1700000000),
+            },
+            DirectoryEntry {
+                name: "subdir".to_string(),
+                entry_type: "dir".to_string(),
+                size: 0,
+                modified: None,
+            },
+        ];
+        let result = ExecuteResult::FileList {
+            entries,
+            total_entries: 2,
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains(r#""type":"file_list""#));
+        assert!(json.contains("file.txt"));
+        assert!(json.contains("subdir"));
+
+        let parsed: ExecuteResult = serde_json::from_str(&json).unwrap();
+        if let ExecuteResult::FileList {
+            entries,
+            total_entries,
+        } = parsed
+        {
+            assert_eq!(total_entries, 2);
+            assert_eq!(entries.len(), 2);
+            assert_eq!(entries[0].name, "file.txt");
+            assert_eq!(entries[0].entry_type, "file");
+        } else {
+            panic!("Expected FileList result");
+        }
+    }
+
+    #[test]
+    fn test_execute_result_file_delete() {
+        let result = ExecuteResult::FileDelete { paths_removed: 3 };
+
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains(r#""type":"file_delete""#));
+        assert!(json.contains("\"paths_removed\":3"));
+
+        let parsed: ExecuteResult = serde_json::from_str(&json).unwrap();
+        if let ExecuteResult::FileDelete { paths_removed } = parsed {
+            assert_eq!(paths_removed, 3);
+        } else {
+            panic!("Expected FileDelete result");
+        }
+    }
+
+    #[test]
+    fn test_execute_result_env_read() {
+        let mut values = HashMap::new();
+        values.insert("API_KEY".to_string(), "sk_test_123".to_string());
+        values.insert("SECRET".to_string(), "hunter2".to_string());
+
+        let result = ExecuteResult::EnvRead { values };
+
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains(r#""type":"env_read""#));
+        assert!(json.contains("API_KEY"));
+        assert!(json.contains("sk_test_123"));
+
+        let parsed: ExecuteResult = serde_json::from_str(&json).unwrap();
+        if let ExecuteResult::EnvRead { values } = parsed {
+            assert_eq!(values.len(), 2);
+            assert_eq!(values.get("API_KEY"), Some(&"sk_test_123".to_string()));
+        } else {
+            panic!("Expected EnvRead result");
+        }
     }
 }

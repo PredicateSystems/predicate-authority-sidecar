@@ -10,7 +10,8 @@ pub mod execute;
 
 pub use delegation::{DelegateError, DelegateErrorCode, DelegateRequest, DelegateResponse};
 pub use execute::{
-    ExecuteErrorCode, ExecutePayload, ExecuteRequest, ExecuteResponse, ExecuteResult,
+    DirectoryEntry, ExecuteErrorCode, ExecutePayload, ExecuteRequest, ExecuteResponse,
+    ExecuteResult,
 };
 
 use serde::{Deserialize, Serialize};
