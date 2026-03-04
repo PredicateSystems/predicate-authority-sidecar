@@ -243,10 +243,108 @@ Integrate with your existing IdP for token validation:
 |----------|--------|-------------|
 | `/v1/authorize` | POST | Core authorization check |
 | `/v1/delegate` | POST | Delegate mandate to sub-agent |
+| `/v1/execute` | POST | Execute operation via sidecar (zero-trust mode) |
 | `/health` | GET | Health check |
 | `/status` | GET | Stats and status |
 | `/metrics` | GET | Prometheus metrics |
 | `/policy/reload` | POST | Hot-reload policy |
+
+---
+
+## Execution Proxying (Zero-Trust Mode)
+
+The `/v1/execute` endpoint enables **zero-trust execution** where the sidecar executes operations on behalf of agents. This prevents "confused deputy" attacks where an agent requests authorization for one resource but accesses another.
+
+```
+Traditional (Cooperative):           Zero-Trust (Execution Proxy):
+┌─────────┐  authorize  ┌─────────┐  ┌─────────┐  execute   ┌─────────┐
+│  Agent  │────────────▶│ Sidecar │  │  Agent  │───────────▶│ Sidecar │
+│         │◀────────────│         │  │         │◀───────────│         │
+│         │   ALLOWED   │         │  │         │  result    │ (reads  │
+│         │             │         │  │         │            │  file)  │
+│  reads  │             │         │  └─────────┘            └─────────┘
+│  file   │             │         │
+│  (could │             │         │  Agent never touches the resource
+│  cheat) │             │         │  directly - sidecar is the executor
+└─────────┘             └─────────┘
+```
+
+**Example: File Read via Execute Proxy**
+
+```bash
+# 1. First authorize and get a mandate
+curl -X POST http://127.0.0.1:8787/v1/authorize \
+  -H "Content-Type: application/json" \
+  -d '{"principal":"agent:web","action":"fs.read","resource":"/src/index.ts"}'
+# Returns: {"allowed":true,"reason":"allowed","mandate_id":"m_abc123"}
+
+# 2. Execute through the sidecar (agent never reads file directly)
+curl -X POST http://127.0.0.1:8787/v1/execute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "mandate_id": "m_abc123",
+    "action": "fs.read",
+    "resource": "/src/index.ts"
+  }'
+# Returns: {"success":true,"result":{"type":"file_read","content":"...","size":1234,"content_hash":"sha256:..."}}
+```
+
+**Supported Actions:**
+
+| Action | Payload | Result |
+|--------|---------|--------|
+| `fs.read` | None | `FileRead { content, size, content_hash }` |
+| `fs.write` | `{ type: "file_write", content, create?, append? }` | `FileWrite { bytes_written, content_hash }` |
+| `fs.list` | None | `FileList { entries: [{ name, type, size, modified? }], total_entries }` |
+| `fs.delete` | `{ type: "file_delete", recursive? }` | `FileDelete { paths_removed }` |
+| `cli.exec` | `{ type: "cli_exec", command, args?, cwd?, timeout_ms? }` | `CliExec { exit_code, stdout, stderr, duration_ms }` |
+| `http.fetch` | `{ type: "http_fetch", method, headers?, body? }` | `HttpFetch { status_code, headers, body, body_hash }` |
+| `env.read` | `{ type: "env_read", keys: ["VAR_NAME"] }` | `EnvRead { values: { "VAR_NAME": "..." } }` |
+
+**Security Guarantees:**
+
+- Mandate must exist and not be expired
+- Requested action must match mandate's action
+- Requested resource must match mandate's resource scope
+- All executions logged to proof ledger with evidence hashes
+- `fs.delete` with `recursive: true` requires explicit policy allowlist
+- `env.read` only returns values for explicitly authorized keys in the policy
+
+---
+
+## Roadmap: Planned Actions
+
+The following actions are planned to support autonomous agent workflows:
+
+### Filesystem Operations
+
+| Action | Priority | Payload | Result | Rationale |
+|--------|----------|---------|--------|-----------|
+| `fs.stat` | Medium | `{ path }` | `FsStat { size, modified, permissions, is_dir }` | Check file existence/metadata without reading content |
+| `fs.copy` | Medium | `{ source, destination, overwrite? }` | `FsCopy { bytes_copied }` | File duplication with policy enforcement |
+| `fs.move` | Medium | `{ source, destination, overwrite? }` | `FsMove { success }` | Atomic rename/move operations |
+
+### Environment & Secrets
+
+| Action | Priority | Payload | Result | Rationale |
+|--------|----------|---------|--------|-----------|
+| `env.list` | Low | `{ pattern? }` | `EnvList { keys: ["VAR1", "VAR2"] }` | List available env vars (names only, not values) |
+
+### Process Management
+
+| Action | Priority | Payload | Result | Rationale |
+|--------|----------|---------|--------|-----------|
+| `process.list` | Low | `{ filter? }` | `ProcessList { processes: [{ pid, name, cpu, memory }] }` | Visibility into running processes |
+| `process.kill` | Low | `{ pid, signal? }` | `ProcessKill { success }` | Governed process termination |
+
+### Network Operations
+
+| Action | Priority | Payload | Result | Rationale |
+|--------|----------|---------|--------|-----------|
+| `net.dns` | Low | `{ hostname }` | `NetDns { addresses: ["1.2.3.4"] }` | DNS resolution for network diagnostics |
+| `net.ping` | Low | `{ host, count? }` | `NetPing { reachable, latency_ms }` | Network connectivity checks |
+
+**Note:** All planned actions will follow the same mandate validation flow as existing actions
 
 ---
 

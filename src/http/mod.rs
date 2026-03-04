@@ -1,8 +1,10 @@
 //! HTTP server and request handlers for the sidecar daemon.
 
 pub mod delegate;
+pub mod execute;
 
 pub use delegate::{delegate_handler, DelegationState};
+pub use execute::execute_handler;
 
 use axum::{
     extract::{Json, Query, State},
@@ -19,6 +21,7 @@ use tracing::{debug, info, warn};
 
 use crate::bridge::IdpBridgeProvider;
 use crate::identity::{LedgerQueueItem, LocalIdentityRegistry, TaskIdentityRecord};
+use crate::mandate::MandateStore;
 use crate::models::{
     AuthorizationDecision, PolicyRule, SidecarAuthorizeRequest, SidecarAuthorizeResponse,
 };
@@ -33,6 +36,7 @@ pub struct AppState {
     pub identity_registry: Option<Arc<LocalIdentityRegistry>>,
     pub idp_bridge: Option<Arc<IdpBridgeProvider>>,
     pub delegation_state: Option<DelegationState>,
+    pub mandate_store: Option<Arc<MandateStore>>,
     pub start_time: std::time::Instant,
     pub mode: String,
     pub identity_mode: String,
@@ -46,6 +50,7 @@ impl AppState {
             identity_registry: None,
             idp_bridge: None,
             delegation_state: None,
+            mandate_store: None,
             start_time: std::time::Instant::now(),
             mode: mode.to_string(),
             identity_mode: "local".to_string(),
@@ -65,6 +70,11 @@ impl AppState {
 
     pub fn with_delegation(mut self, delegation_state: DelegationState) -> Self {
         self.delegation_state = Some(delegation_state);
+        self
+    }
+
+    pub fn with_mandate_store(mut self, mandate_store: MandateStore) -> Self {
+        self.mandate_store = Some(Arc::new(mandate_store));
         self
     }
 }
@@ -87,6 +97,11 @@ pub fn create_router(state: AppState) -> Router {
             "/v1/delegate",
             post(delegate_handler).with_state(delegation_state),
         );
+    }
+
+    // Add execute endpoint if mandate store is configured (Phase 5: Execution Proxying)
+    if state.mandate_store.is_some() {
+        router = router.route("/v1/execute", post(execute_handler));
     }
 
     router
