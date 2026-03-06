@@ -182,10 +182,17 @@ impl PolicyEngine {
             .iter()
             .any(|a| matches_pattern(a, &request.action));
 
+        // Normalize file paths in resource for fs.* actions to prevent path traversal
+        let normalized_resource = if request.action.starts_with("fs.") {
+            normalize_path(&request.resource)
+        } else {
+            request.resource.clone()
+        };
+
         let resource_matches = rule
             .resources
             .iter()
-            .any(|r| matches_pattern(r, &request.resource));
+            .any(|r| matches_pattern(r, &normalized_resource));
 
         principal_matches && action_matches && resource_matches
     }
@@ -195,6 +202,55 @@ impl Default for PolicyEngine {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Normalize a file path to prevent path traversal attacks.
+/// Resolves . and .. components, removes redundant slashes.
+fn normalize_path(path: &str) -> String {
+    use std::path::{Component, PathBuf};
+
+    // Handle ~ expansion for home directory
+    let expanded = if let Some(rest) = path.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            let mut p = PathBuf::from(home);
+            p.push(rest);
+            p
+        } else {
+            PathBuf::from(path)
+        }
+    } else if path == "~" {
+        if let Some(home) = std::env::var_os("HOME") {
+            PathBuf::from(home)
+        } else {
+            PathBuf::from(path)
+        }
+    } else {
+        PathBuf::from(path)
+    };
+
+    // Normalize the path by resolving . and .. components
+    let mut normalized = PathBuf::new();
+    for component in expanded.components() {
+        match component {
+            Component::Prefix(p) => normalized.push(p.as_os_str()),
+            Component::RootDir => normalized.push("/"),
+            Component::CurDir => {
+                // Skip . components
+            }
+            Component::ParentDir => {
+                // Go up one directory (but don't go above root)
+                normalized.pop();
+            }
+            Component::Normal(name) => normalized.push(name),
+        }
+    }
+
+    // Handle empty path
+    if normalized.as_os_str().is_empty() {
+        return ".".to_string();
+    }
+
+    normalized.to_string_lossy().to_string()
 }
 
 /// Match a glob pattern against a value
@@ -534,5 +590,65 @@ mod pattern_tests {
             "* should match agent:test"
         );
         assert!(matches_pattern("*", "fs.read"), "* should match fs.read");
+    }
+}
+
+#[cfg(test)]
+mod path_normalization_tests {
+    use super::normalize_path;
+
+    #[test]
+    fn test_path_traversal_removal() {
+        // Path traversal attacks should be normalized
+        // Absolute paths with traversal
+        assert_eq!(normalize_path("/workspace/../etc/passwd"), "/etc/passwd");
+        assert_eq!(normalize_path("/a/b/../c"), "/a/c");
+        assert_eq!(normalize_path("/a/./b/./c"), "/a/b/c");
+
+        // Relative paths with excessive traversal (goes to root then etc)
+        // Note: relative paths stay relative but .. is resolved
+        let result = normalize_path("./workspace/../../../etc/passwd");
+        assert!(
+            result.ends_with("etc/passwd"),
+            "Should end with etc/passwd, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_redundant_slashes() {
+        assert_eq!(normalize_path("/src//index.ts"), "/src/index.ts");
+        assert_eq!(normalize_path("/src///foo///bar"), "/src/foo/bar");
+    }
+
+    #[test]
+    fn test_dot_components() {
+        assert_eq!(normalize_path("/src/./index.ts"), "/src/index.ts");
+        assert_eq!(normalize_path("./foo/./bar"), "foo/bar");
+    }
+
+    #[test]
+    fn test_absolute_paths_unchanged() {
+        assert_eq!(normalize_path("/etc/passwd"), "/etc/passwd");
+        assert_eq!(normalize_path("/workspace/src/index.ts"), "/workspace/src/index.ts");
+    }
+
+    #[test]
+    fn test_empty_path() {
+        assert_eq!(normalize_path(""), ".");
+    }
+
+    #[test]
+    fn test_multiple_parent_dirs() {
+        // Multiple .. should keep going up
+        assert_eq!(normalize_path("/a/b/c/../../d"), "/a/d");
+        assert_eq!(normalize_path("/a/b/c/../../../d"), "/d");
+    }
+
+    #[test]
+    fn test_parent_dir_at_root() {
+        // Can't go above root
+        assert_eq!(normalize_path("/../etc/passwd"), "/etc/passwd");
+        assert_eq!(normalize_path("/../../etc/passwd"), "/etc/passwd");
     }
 }

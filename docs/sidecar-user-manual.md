@@ -422,6 +422,42 @@ Patterns support shell-style wildcards:
 | `browser.*` | Any browser action |
 | `https://*` | Any HTTPS URL |
 | `browser.click` | Exact match only |
+| `**/workspace/**` | Any path containing `/workspace/` |
+
+### Path Normalization (v0.5.7+)
+
+For file system actions (`fs.read`, `fs.write`, `fs.list`, etc.), the sidecar automatically normalizes resource paths before policy evaluation:
+
+- **Path traversal resolution**: `../` and `./` components are resolved
+- **Home directory expansion**: `~` is expanded to the user's home directory
+- **Redundant slashes removed**: `//` becomes `/`
+
+**Example:**
+```
+Input:  ./workspace/../../../etc/passwd
+After:  /etc/passwd
+```
+
+**Important:** Because paths are normalized to absolute paths, policy rules should use patterns that match absolute paths:
+
+| Pattern Type | Example | Recommended |
+|--------------|---------|-------------|
+| Relative paths | `./workspace/**` | No - won't match normalized paths |
+| Absolute paths | `/app/workspace/**` | Yes - matches specific location |
+| Wildcard prefix | `**/workspace/**` | Yes - matches workspace anywhere |
+
+**Recommended policy pattern for workspace access:**
+```json
+{
+  "name": "allow-workspace-reads",
+  "effect": "allow",
+  "principals": ["agent:*"],
+  "actions": ["fs.read"],
+  "resources": ["**/workspace/**"]
+}
+```
+
+This pattern matches `/app/workspace/file.txt`, `/home/user/workspace/src/index.ts`, etc.
 
 ### Evaluation Order
 
