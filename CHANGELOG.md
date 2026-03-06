@@ -2,6 +2,26 @@
 
 All notable changes to predicate-authorityd will be documented in this file.
 
+## [0.5.7] - 2026-03-05
+
+### Added
+
+#### Path Normalization in Policy Evaluation
+- **Path traversal prevention**: Added `normalize_path()` function in policy engine that resolves `.` and `..` components before matching against policy rules
+- **Home directory expansion**: Paths starting with `~` are expanded to the user's home directory
+- **Automatic normalization for fs.* actions**: File system actions (`fs.read`, `fs.write`, etc.) now have their resource paths normalized before policy evaluation
+
+### Security
+- **Defense in depth**: Path normalization now happens in both SDK (before sending to sidecar) and sidecar (during policy evaluation), providing layered protection against path traversal attacks
+- **Adversarial input handling**: Inputs like `./workspace/../../../etc/passwd` are now correctly resolved to `/etc/passwd` and matched against deny rules
+
+### Tests
+- Added `path_normalization_tests` module with tests for:
+  - Path traversal removal
+  - Redundant slash handling
+  - Dot component resolution
+  - Parent directory at root handling
+
 ## [0.5.0] - 2026-02-27
 
 ### Added
