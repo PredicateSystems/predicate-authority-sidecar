@@ -630,7 +630,10 @@ mod path_normalization_tests {
     #[test]
     fn test_absolute_paths_unchanged() {
         assert_eq!(normalize_path("/etc/passwd"), "/etc/passwd");
-        assert_eq!(normalize_path("/workspace/src/index.ts"), "/workspace/src/index.ts");
+        assert_eq!(
+            normalize_path("/workspace/src/index.ts"),
+            "/workspace/src/index.ts"
+        );
     }
 
     #[test]
