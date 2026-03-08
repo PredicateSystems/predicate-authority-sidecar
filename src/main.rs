@@ -16,7 +16,8 @@ use predicate_authorityd::config::Config;
 use predicate_authorityd::control_plane::{
     ControlPlaneClient, ControlPlaneConfig, RevocationCache,
 };
-use predicate_authorityd::http::{create_router, AppState};
+use predicate_authorityd::http::{create_router, AppState, DelegationState};
+use predicate_authorityd::mandate::MandateSigner;
 use predicate_authorityd::identity::LocalIdentityRegistry;
 use predicate_authorityd::models;
 use predicate_authorityd::policy::PolicyEngine;
@@ -193,6 +194,15 @@ struct Cli {
     /// Claim name carrying roles/groups
     #[arg(long, env = "OKTA_ROLE_CLAIM", default_value = "groups")]
     okta_role_claim: String,
+
+    // --- Chain Delegation options ---
+    /// Enable chain delegation support (/v1/delegate endpoint)
+    #[arg(long, env = "PREDICATE_ENABLE_DELEGATION")]
+    enable_delegation: bool,
+
+    /// Maximum delegation depth (default: 5)
+    #[arg(long, env = "PREDICATE_MAX_DELEGATION_DEPTH", default_value = "5")]
+    max_delegation_depth: u32,
 }
 
 #[derive(Subcommand, Debug)]
