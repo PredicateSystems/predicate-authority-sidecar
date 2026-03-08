@@ -109,6 +109,40 @@ curl -X POST http://127.0.0.1:8787/v1/authorize \
 # {"allowed":false,"reason":"explicit_deny"}
 ```
 
+### Multi-Scope Authorization
+
+Request authorization for multiple action/resource pairs in a single call. This is useful for orchestrators that need broad permissions across different domains (e.g., browser access AND filesystem access):
+
+```bash
+# Multi-scope authorization request
+curl -X POST http://127.0.0.1:8787/v1/authorize \
+  -H "Content-Type: application/json" \
+  -d '{
+    "principal": "agent:orchestrator",
+    "scopes": [
+      {"action": "browser.*", "resource": "https://www.amazon.com/*"},
+      {"action": "fs.*", "resource": "**/workspace/data/**"}
+    ],
+    "intent_hash": "orchestrate:ecommerce:run-123"
+  }'
+# Response includes scopes_authorized showing which scopes matched and their rules:
+# {
+#   "allowed": true,
+#   "mandate_token": "m_abc123...",
+#   "scopes_authorized": [
+#     {"action": "browser.*", "resource": "https://www.amazon.com/*", "matched_rule": "allow-browser-https"},
+#     {"action": "fs.*", "resource": "**/workspace/data/**", "matched_rule": "allow-workspace-fs"}
+#   ]
+# }
+```
+
+**When to use multi-scope:**
+- Orchestrators delegating to multiple sub-agents with different capabilities
+- Workflows requiring cross-domain permissions (browser + filesystem + HTTP)
+- Reducing round-trips when multiple scopes are known upfront
+
+**Backward compatibility:** Single action/resource requests continue to work as before.
+
 ---
 
 ## Why This Exists
@@ -241,13 +275,54 @@ Integrate with your existing IdP for token validation:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/v1/authorize` | POST | Core authorization check |
+| `/v1/authorize` | POST | Core authorization check (single or multi-scope) |
 | `/v1/delegate` | POST | Delegate mandate to sub-agent |
 | `/v1/execute` | POST | Execute operation via sidecar (zero-trust mode) |
 | `/health` | GET | Health check |
 | `/status` | GET | Stats and status |
 | `/metrics` | GET | Prometheus metrics |
 | `/policy/reload` | POST | Hot-reload policy |
+
+### Multi-Scope Delegation Chain
+
+When a parent mandate has multiple scopes, child delegations are validated using **OR semantics**—the child's scope must be a subset of at least one parent scope:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Root Mandate (Orchestrator)                                    │
+│  scopes:                                                        │
+│    - action: browser.* | resource: https://www.amazon.com/*     │
+│    - action: fs.*      | resource: **/workspace/data/**         │
+└─────────────────────────────┬───────────────────────────────────┘
+                              │
+            ┌─────────────────┴─────────────────┐
+            ▼                                   ▼
+┌───────────────────────┐           ┌───────────────────────┐
+│  Scraper Delegation   │           │  Analyst Delegation   │
+│  action: browser.*    │           │  action: fs.read      │
+│  resource: https://   │           │  resource: **/work    │
+│    www.amazon.com/*   │           │    space/data/**      │
+│                       │           │                       │
+│  ✓ Subset of scope 1  │           │  ✓ Subset of scope 2  │
+└───────────────────────┘           └───────────────────────┘
+```
+
+**Delegation request:**
+
+```bash
+# Delegate from multi-scope parent to narrower child scope
+curl -X POST http://127.0.0.1:8787/v1/delegate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "parent_mandate_token": "m_orchestrator_abc123...",
+    "principal": "agent:scraper",
+    "action": "browser.navigate",
+    "resource": "https://www.amazon.com/dp/*",
+    "intent_hash": "scrape:product-page"
+  }'
+# Child scope (browser.navigate on amazon.com/dp/*) is validated against
+# parent's scopes using OR semantics - matches parent scope 1
+```
 
 ---
 
