@@ -16,8 +16,9 @@ use predicate_authorityd::config::Config;
 use predicate_authorityd::control_plane::{
     ControlPlaneClient, ControlPlaneConfig, RevocationCache,
 };
-use predicate_authorityd::http::{create_router, AppState};
+use predicate_authorityd::http::{create_router, AppState, DelegationState};
 use predicate_authorityd::identity::LocalIdentityRegistry;
+use predicate_authorityd::mandate::{LocalMandateSigner, SigningAlgorithm};
 use predicate_authorityd::models;
 use predicate_authorityd::policy::PolicyEngine;
 use predicate_authorityd::policy_loader;
@@ -193,6 +194,15 @@ struct Cli {
     /// Claim name carrying roles/groups
     #[arg(long, env = "OKTA_ROLE_CLAIM", default_value = "groups")]
     okta_role_claim: String,
+
+    // --- Chain Delegation options ---
+    /// Enable chain delegation support (/v1/delegate endpoint)
+    #[arg(long, env = "PREDICATE_ENABLE_DELEGATION")]
+    enable_delegation: bool,
+
+    /// Maximum delegation depth (default: 5)
+    #[arg(long, env = "PREDICATE_MAX_DELEGATION_DEPTH", default_value = "5")]
+    max_delegation_depth: u32,
 }
 
 #[derive(Subcommand, Debug)]
@@ -592,6 +602,34 @@ async fn main() -> anyhow::Result<()> {
     );
     state = state.with_identity_registry(registry);
     info!("Local identity registry: {}", identity_path);
+
+    // Initialize chain delegation if enabled
+    if cli.enable_delegation {
+        // Use the same signing key as the local IdP for mandate signing
+        let delegation_signing_key = std::env::var(&local_idp_signing_key_env)
+            .unwrap_or_else(|_| "predicate-local-idp-dev-key".to_string());
+
+        // Default TTL for delegated mandates (5 minutes)
+        let delegation_ttl_s = file_config.identity.default_ttl_s;
+
+        let mandate_signer = LocalMandateSigner::new(
+            &delegation_signing_key,
+            delegation_ttl_s,
+            SigningAlgorithm::HS256,
+            true, // allow_legacy_hs256_verify
+            Some(&local_idp_issuer),
+            Some(&local_idp_audience),
+        );
+
+        let delegation_state =
+            DelegationState::new(mandate_signer).with_max_depth(cli.max_delegation_depth);
+
+        state = state.with_delegation(delegation_state);
+        info!(
+            "Chain delegation enabled (max_depth: {}, ttl: {}s)",
+            cli.max_delegation_depth, delegation_ttl_s
+        );
+    }
 
     // Initialize control-plane client if in cloud_connected mode
     if mode == "cloud_connected" {
