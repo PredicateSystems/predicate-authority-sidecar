@@ -268,6 +268,9 @@ pub struct SidecarAuthorizeResponse {
     pub reason: String,
     /// Always serialized (as null or string) for SDK compatibility
     pub mandate_id: Option<String>,
+    /// The signed mandate JWT token (for chain delegation)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mandate_token: Option<String>,
     /// Always serialized (as null or string) for SDK compatibility
     pub violated_rule: Option<String>,
     #[serde(default)]
@@ -279,7 +282,11 @@ impl From<AuthorizationDecision> for SidecarAuthorizeResponse {
         Self {
             allowed: decision.allowed,
             reason: decision.reason.to_string(),
-            mandate_id: decision.mandate.map(|m| m.claims.mandate_id),
+            mandate_id: decision
+                .mandate
+                .as_ref()
+                .map(|m| m.claims.mandate_id.clone()),
+            mandate_token: decision.mandate.map(|m| m.token),
             violated_rule: decision.violated_rule,
             missing_labels: decision.missing_labels,
         }
