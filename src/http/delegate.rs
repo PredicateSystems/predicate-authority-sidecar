@@ -19,6 +19,16 @@ use crate::models::{
 };
 use crate::policy::subset::{is_scope_subset, is_scope_subset_of_any};
 
+/// Unified delegate result that serializes directly without Ok/Err wrapper.
+/// This enum uses untagged serialization so success returns DelegateResponse fields
+/// directly and error returns DelegateError fields directly.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(untagged)]
+pub enum DelegateResult {
+    Success(DelegateResponse),
+    Error(DelegateError),
+}
+
 /// Default maximum delegation depth if not specified in policy
 const DEFAULT_MAX_DELEGATION_DEPTH: u32 = 5;
 
@@ -99,7 +109,7 @@ pub async fn delegate_handler(
             );
             return (
                 StatusCode::UNAUTHORIZED,
-                Json(Err::<DelegateResponse, DelegateError>(
+                Json(DelegateResult::Error(
                     DelegateError::invalid_parent_mandate("signature verification failed"),
                 )),
             );
@@ -117,7 +127,7 @@ pub async fn delegate_handler(
         );
         return (
             StatusCode::FORBIDDEN,
-            Json(Err(DelegateError::parent_revoked())),
+            Json(DelegateResult::Error(DelegateError::parent_revoked())),
         );
     }
 
@@ -136,7 +146,7 @@ pub async fn delegate_handler(
         );
         return (
             StatusCode::UNAUTHORIZED,
-            Json(Err(DelegateError::parent_expired())),
+            Json(DelegateResult::Error(DelegateError::parent_expired())),
         );
     }
 
@@ -195,7 +205,7 @@ pub async fn delegate_handler(
 
         return (
             StatusCode::FORBIDDEN,
-            Json(Err(DelegateError::scope_exceeded(
+            Json(DelegateResult::Error(DelegateError::scope_exceeded(
                 &parent_action_display,
                 &parent_resource_display,
                 &request.requested_action,
@@ -214,7 +224,7 @@ pub async fn delegate_handler(
         );
         return (
             StatusCode::FORBIDDEN,
-            Json(Err(DelegateError::max_depth_exceeded(
+            Json(DelegateResult::Error(DelegateError::max_depth_exceeded(
                 parent_claims.delegation_depth,
                 state.max_delegation_depth,
             ))),
@@ -272,7 +282,7 @@ pub async fn delegate_handler(
             .unwrap_or_default(),
     };
 
-    (StatusCode::OK, Json(Ok(response)))
+    (StatusCode::OK, Json(DelegateResult::Success(response)))
 }
 
 /// Issue a derived mandate with custom TTL.
@@ -302,13 +312,11 @@ fn issue_derived_mandate(
     mandate
 }
 
-/// Response type for delegation endpoint
-pub type DelegateResult = Result<DelegateResponse, DelegateError>;
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::mandate::SigningAlgorithm;
+    use crate::models::DelegateErrorCode;
 
     fn test_signer() -> LocalMandateSigner {
         LocalMandateSigner::new(
@@ -554,5 +562,54 @@ mod tests {
             "network.connect",
             "tcp://internal:3306"
         ));
+    }
+
+    // --- DelegateResult serialization tests ---
+
+    #[test]
+    fn test_delegate_result_success_serialization() {
+        // Test that DelegateResult::Success serializes without Ok wrapper
+        let response = DelegateResponse {
+            mandate_token: "eyJhbGci...".to_string(),
+            mandate_id: "m_abc123".to_string(),
+            expires_at: 1700000000,
+            delegation_depth: 1,
+            delegation_chain_hash: "hash123".to_string(),
+        };
+
+        let result = DelegateResult::Success(response);
+        let json = serde_json::to_string(&result).unwrap();
+
+        // Should NOT have "Ok" or "Success" wrapper
+        assert!(!json.contains("\"Ok\""));
+        assert!(!json.contains("\"Success\""));
+        // Should have the response fields directly
+        assert!(json.contains("\"mandate_token\""));
+        assert!(json.contains("\"mandate_id\""));
+        assert!(json.contains("\"m_abc123\""));
+
+        // Verify it can be parsed as DelegateResponse
+        let parsed: DelegateResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.mandate_id, "m_abc123");
+    }
+
+    #[test]
+    fn test_delegate_result_error_serialization() {
+        // Test that DelegateResult::Error serializes without Err wrapper
+        let error = DelegateError::scope_exceeded("browser.*", "*", "fs.*", "*");
+        let result = DelegateResult::Error(error);
+        let json = serde_json::to_string(&result).unwrap();
+
+        // Should NOT have "Err" or "Error" wrapper
+        assert!(!json.contains("\"Err\""));
+        assert!(!json.contains("\"Error\""));
+        // Should have the error fields directly
+        assert!(json.contains("\"code\""));
+        assert!(json.contains("\"message\""));
+        assert!(json.contains("DELEGATION_EXCEEDS_SCOPE"));
+
+        // Verify it can be parsed as DelegateError
+        let parsed: DelegateError = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.code, DelegateErrorCode::DelegationExceedsScope);
     }
 }
