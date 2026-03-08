@@ -174,6 +174,7 @@ async fn authorize_handler(
                         allowed: false,
                         reason: "MISSING_AUTHORIZATION".to_string(),
                         mandate_id: None,
+                        mandate_token: None,
                         violated_rule: None,
                         missing_labels: vec![],
                     };
@@ -200,6 +201,7 @@ async fn authorize_handler(
                         allowed: false,
                         reason: format!("INVALID_TOKEN: {}", e),
                         mandate_id: None,
+                        mandate_token: None,
                         violated_rule: None,
                         missing_labels: vec![],
                     };
@@ -226,7 +228,36 @@ async fn authorize_handler(
         Some(latency_us),
     );
 
-    let decision: AuthorizationDecision = result.into();
+    let mut decision: AuthorizationDecision = result.into();
+
+    // If delegation is enabled and authorization allowed, issue a mandate
+    if decision.allowed {
+        if let Some(ref delegation_state) = state.delegation_state {
+            // Build the ActionRequest structure for mandate signing
+            let principal_ref = crate::models::PrincipalRef::new(&request.principal);
+            let action_spec = crate::models::ActionSpec {
+                action: request.action.clone(),
+                resource: request.resource.clone(),
+                intent: request.intent_hash.clone().unwrap_or_default(),
+            };
+            let state_evidence = crate::models::StateEvidence::new("authorize", &request.action);
+            let action_request = crate::models::ActionRequest {
+                principal: principal_ref,
+                action_spec,
+                state_evidence,
+                verification_evidence: Default::default(),
+            };
+
+            // Issue root mandate (no parent)
+            let mandate = delegation_state.mandate_signer.issue(&action_request, None);
+            debug!(
+                "Issued mandate for {}: mandate_id={}",
+                request.principal, mandate.claims.mandate_id
+            );
+            decision.mandate = Some(mandate);
+        }
+    }
+
     let response: SidecarAuthorizeResponse = decision.into();
 
     // Return 200 for allowed, 403 for denied (matches Python sidecar behavior)
@@ -734,10 +765,48 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::Request;
+    use http_body_util::BodyExt;
     use tower::util::ServiceExt;
+
+    use crate::mandate::{LocalMandateSigner, SigningAlgorithm};
+    use crate::models::{PolicyEffect, PolicyRule};
 
     fn test_state() -> AppState {
         AppState::new(PolicyEngine::new(), "test")
+    }
+
+    fn test_signer() -> LocalMandateSigner {
+        LocalMandateSigner::new(
+            "test-delegation-secret-key-minimum-32-chars",
+            300,
+            SigningAlgorithm::HS256,
+            true,
+            None,
+            None,
+        )
+    }
+
+    fn test_state_with_delegation() -> AppState {
+        let delegation_state = DelegationState::new(test_signer()).with_max_depth(5);
+        AppState::new(PolicyEngine::new(), "test").with_delegation(delegation_state)
+    }
+
+    fn test_state_with_policy_and_delegation() -> AppState {
+        let rules = vec![PolicyRule {
+            name: "allow-test-agent".to_string(),
+            effect: PolicyEffect::Allow,
+            principals: vec!["agent:test".to_string()],
+            actions: vec!["test.action".to_string()],
+            resources: vec!["test://resource".to_string()],
+            required_labels: vec![],
+            max_delegation_depth: None,
+        }];
+        let policy = PolicyEngine::with_rules(rules);
+        // Disable SSRF protection for test URLs
+        policy.set_ssrf_protection(None);
+
+        let delegation_state = DelegationState::new(test_signer()).with_max_depth(5);
+        AppState::new(policy, "test").with_delegation(delegation_state)
     }
 
     #[tokio::test]
@@ -776,5 +845,120 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_with_delegation_returns_mandate_token() {
+        let app = create_router(test_state_with_policy_and_delegation());
+
+        let body = r#"{"principal": "agent:test", "action": "test.action", "resource": "test://resource"}"#;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/authorize")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Parse response body
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let response_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+
+        // Verify mandate_token is present when delegation is enabled
+        assert!(response_json["allowed"].as_bool().unwrap());
+        assert!(response_json["mandate_token"].is_string());
+        assert!(!response_json["mandate_token"].as_str().unwrap().is_empty());
+        assert!(response_json["mandate_id"].is_string());
+        assert!(!response_json["mandate_id"].as_str().unwrap().is_empty());
+
+        // Mandate token should be a JWT (has 3 parts separated by dots)
+        let mandate_token = response_json["mandate_token"].as_str().unwrap();
+        assert_eq!(
+            mandate_token.split('.').count(),
+            3,
+            "mandate_token should be a JWT"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_authorize_without_delegation_no_mandate_token() {
+        // Create state with policy but NO delegation
+        let rules = vec![PolicyRule {
+            name: "allow-test-agent".to_string(),
+            effect: PolicyEffect::Allow,
+            principals: vec!["agent:test".to_string()],
+            actions: vec!["test.action".to_string()],
+            resources: vec!["test://resource".to_string()],
+            required_labels: vec![],
+            max_delegation_depth: None,
+        }];
+        let policy = PolicyEngine::with_rules(rules);
+        policy.set_ssrf_protection(None);
+        let state = AppState::new(policy, "test");
+
+        let app = create_router(state);
+
+        let body = r#"{"principal": "agent:test", "action": "test.action", "resource": "test://resource"}"#;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/authorize")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Parse response body
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let response_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+
+        // Verify mandate_token is null when delegation is NOT enabled
+        assert!(response_json["allowed"].as_bool().unwrap());
+        assert!(response_json["mandate_token"].is_null());
+        assert!(response_json["mandate_id"].is_null());
+    }
+
+    #[tokio::test]
+    async fn test_authorize_denied_no_mandate_token() {
+        // Delegation enabled but authorization denied - should not issue mandate
+        let app = create_router(test_state_with_delegation());
+
+        let body = r#"{"principal": "agent:test", "action": "test.action", "resource": "test://resource"}"#;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/authorize")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        // Parse response body
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let response_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+
+        // Verify no mandate token when authorization denied
+        assert!(!response_json["allowed"].as_bool().unwrap());
+        assert!(response_json["mandate_token"].is_null());
+        assert!(response_json["mandate_id"].is_null());
     }
 }

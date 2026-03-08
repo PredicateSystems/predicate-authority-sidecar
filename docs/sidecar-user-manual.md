@@ -211,6 +211,8 @@ Configuration can be provided via (in order of precedence):
 | `--policy-file` | `PREDICATE_POLICY_FILE` | - | Path to policy file |
 | `--log-level` | `PREDICATE_LOG_LEVEL` | `info` | trace/debug/info/warn/error |
 | `--identity-mode` | `PREDICATE_IDENTITY_MODE` | `local` | Identity provider mode |
+| `--enable-delegation` | `PREDICATE_ENABLE_DELEGATION` | `false` | Enable chain delegation (`/v1/delegate` endpoint) |
+| `--max-delegation-depth` | `PREDICATE_MAX_DELEGATION_DEPTH` | `5` | Maximum delegation chain depth |
 
 ### Security Options (Phase 5)
 
@@ -542,6 +544,18 @@ Response (allowed):
   "allowed": true,
   "reason": "allowed",
   "mandate_id": "m_7f3a2b1c",
+  "mandate_token": null,
+  "missing_labels": []
+}
+```
+
+Response (allowed, with delegation enabled):
+```json
+{
+  "allowed": true,
+  "reason": "allowed",
+  "mandate_id": "m_7f3a2b1c",
+  "mandate_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
   "missing_labels": []
 }
 ```
@@ -771,11 +785,36 @@ When you quit the dashboard, a session summary is printed:
 
 Delegation allows agents to pass limited permissions to sub-agents.
 
+### Enabling Delegation
+
+Chain delegation must be explicitly enabled when starting the sidecar:
+
+```bash
+./predicate-authorityd \
+  --enable-delegation \
+  --max-delegation-depth 5 \
+  --policy-file policy.json \
+  run
+```
+
+Or via environment variables:
+
+```bash
+export PREDICATE_ENABLE_DELEGATION=true
+export PREDICATE_MAX_DELEGATION_DEPTH=5
+./predicate-authorityd --policy-file policy.json run
+```
+
+When delegation is enabled:
+- The `/v1/delegate` endpoint becomes available
+- The `/v1/authorize` response includes `mandate_token` (a signed JWT) for allowed requests
+- The `mandate_token` can be passed to `/v1/delegate` as `parent_mandate_token`
+
 ### How Delegation Works
 
-1. Agent A receives a mandate for `browser.*` on `https://*`
-2. Agent A delegates to Agent B with narrower scope: `browser.click` on `https://example.com/*`
-3. Agent B can only act within the delegated scope
+1. Agent A requests authorization via `/v1/authorize` and receives a `mandate_token`
+2. Agent A delegates to Agent B via `/v1/delegate` with narrower scope: `browser.click` on `https://example.com/*`
+3. Agent B receives its own `mandate_token` and can only act within the delegated scope
 4. If Agent A's mandate is revoked, Agent B's mandate is automatically revoked (cascade)
 
 ### Delegation Request
