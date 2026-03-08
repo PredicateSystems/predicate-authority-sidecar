@@ -219,7 +219,15 @@ impl LocalMandateSigner {
             .as_secs() as i64;
 
         let issued_at = now;
-        let expires_at = now + self.ttl_seconds;
+
+        // Cap TTL to parent's remaining TTL for delegated mandates
+        let expires_at = if let Some(parent) = parent_mandate {
+            let parent_remaining_ttl = (parent.claims.expires_at_epoch_s - now).max(0);
+            let requested_ttl = self.ttl_seconds;
+            now + requested_ttl.min(parent_remaining_ttl)
+        } else {
+            now + self.ttl_seconds
+        };
 
         // Compute intent hash
         let intent_hash = Self::sha256_hex(&request.action_spec.intent);
