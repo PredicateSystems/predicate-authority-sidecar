@@ -17,7 +17,7 @@ use crate::models::{
     ActionRequest, ActionSpec, DelegateError, DelegateRequest, DelegateResponse, PrincipalRef,
     SignedMandate, StateEvidence, VerificationEvidence,
 };
-use crate::policy::subset::is_scope_subset;
+use crate::policy::subset::{is_scope_subset, is_scope_subset_of_any};
 
 /// Default maximum delegation depth if not specified in policy
 const DEFAULT_MAX_DELEGATION_DEPTH: u32 = 5;
@@ -141,24 +141,63 @@ pub async fn delegate_handler(
     }
 
     // 3. Validate scope subset
-    if !is_scope_subset(
-        &parent_claims.action,
-        &parent_claims.resource,
-        &request.requested_action,
-        &request.requested_resource,
-    ) {
+    // For multi-scope parents, check if requested scope is subset of ANY parent scope (OR semantics)
+    let parent_scopes = parent_claims.all_scopes();
+    let scope_valid = if parent_claims.is_multi_scope() {
+        // Multi-scope parent: child scope must match at least one parent scope
+        is_scope_subset_of_any(
+            &parent_scopes,
+            &request.requested_action,
+            &request.requested_resource,
+        )
+    } else {
+        // Single-scope parent: use original validation
+        is_scope_subset(
+            &parent_claims.action,
+            &parent_claims.resource,
+            &request.requested_action,
+            &request.requested_resource,
+        )
+    };
+
+    if !scope_valid {
         warn!(
-            parent_action = %parent_claims.action,
-            parent_resource = %parent_claims.resource,
+            parent_scopes = ?parent_scopes,
             requested_action = %request.requested_action,
             requested_resource = %request.requested_resource,
             "Delegation failed: scope exceeds parent"
         );
+        // For error message, show all parent scopes if multi-scope
+        let parent_action_display = if parent_claims.is_multi_scope() {
+            format!(
+                "[{}]",
+                parent_scopes
+                    .iter()
+                    .map(|s| s.action.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        } else {
+            parent_claims.action.clone()
+        };
+        let parent_resource_display = if parent_claims.is_multi_scope() {
+            format!(
+                "[{}]",
+                parent_scopes
+                    .iter()
+                    .map(|s| s.resource.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        } else {
+            parent_claims.resource.clone()
+        };
+
         return (
             StatusCode::FORBIDDEN,
             Json(Err(DelegateError::scope_exceeded(
-                &parent_claims.action,
-                &parent_claims.resource,
+                &parent_action_display,
+                &parent_resource_display,
                 &request.requested_action,
                 &request.requested_resource,
             ))),
@@ -194,6 +233,7 @@ pub async fn delegate_handler(
             action: request.requested_action.clone(),
             resource: request.requested_resource.clone(),
             intent: request.intent_hash.clone(),
+            scopes: Vec::new(), // Derived mandates are single-scope
         },
         state_evidence: StateEvidence::new("delegation", &request.intent_hash),
         verification_evidence: VerificationEvidence {
@@ -292,6 +332,7 @@ mod tests {
                 action: "browser.*".to_string(),
                 resource: "https://*".to_string(),
                 intent: "root task".to_string(),
+                scopes: Vec::new(), // Single-scope mandate
             },
             state_evidence: StateEvidence::new("test", "state123"),
             verification_evidence: VerificationEvidence::default(),
@@ -333,6 +374,7 @@ mod tests {
                 action: "browser.click".to_string(),
                 resource: "https://example.com".to_string(),
                 intent: "click button".to_string(),
+                scopes: Vec::new(),
             },
             state_evidence: StateEvidence::new("test", "child_state"),
             verification_evidence: VerificationEvidence::default(),
@@ -361,6 +403,7 @@ mod tests {
                 action: "browser.click".to_string(),
                 resource: "https://example.com".to_string(),
                 intent: "click".to_string(),
+                scopes: Vec::new(),
             },
             state_evidence: StateEvidence::new("test", "state"),
             verification_evidence: VerificationEvidence::default(),
@@ -389,6 +432,7 @@ mod tests {
                 action: "browser.click".to_string(),
                 resource: "https://example.com".to_string(),
                 intent: "click".to_string(),
+                scopes: Vec::new(),
             },
             state_evidence: StateEvidence::new("test", "state"),
             verification_evidence: VerificationEvidence::default(),
@@ -399,5 +443,116 @@ mod tests {
         // Verify the chain
         assert!(signer.verify_delegation(&root, None));
         assert!(signer.verify_delegation(&derived, Some(&root)));
+    }
+
+    // --- Multi-scope delegation tests ---
+
+    use crate::models::ScopeSpec;
+
+    fn create_multi_scope_root_mandate(signer: &LocalMandateSigner) -> SignedMandate {
+        let request = ActionRequest {
+            principal: PrincipalRef::new("agent:orchestrator"),
+            action_spec: ActionSpec {
+                action: "browser.*".to_string(),
+                resource: "https://*".to_string(),
+                intent: "orchestrate task".to_string(),
+                scopes: vec![
+                    ScopeSpec::new("browser.*", "https://*"),
+                    ScopeSpec::new("fs.*", "/workspace/**"),
+                ],
+            },
+            state_evidence: StateEvidence::new("test", "state123"),
+            verification_evidence: VerificationEvidence::default(),
+        };
+        signer.issue(&request, None)
+    }
+
+    #[test]
+    fn test_multi_scope_mandate_issuance() {
+        let signer = test_signer();
+        let root = create_multi_scope_root_mandate(&signer);
+
+        // Verify the mandate has multiple scopes
+        assert!(root.claims.is_multi_scope());
+        assert_eq!(root.claims.scopes.len(), 2);
+        assert_eq!(root.claims.scopes[0].action, "browser.*");
+        assert_eq!(root.claims.scopes[1].action, "fs.*");
+    }
+
+    #[test]
+    fn test_multi_scope_delegation_browser_scope() {
+        let signer = test_signer();
+        let root = create_multi_scope_root_mandate(&signer);
+
+        // Child requests browser scope - should succeed
+        let child_request = ActionRequest {
+            principal: PrincipalRef::new("agent:scraper"),
+            action_spec: ActionSpec {
+                action: "browser.navigate".to_string(),
+                resource: "https://amazon.com/products".to_string(),
+                intent: "scrape products".to_string(),
+                scopes: Vec::new(),
+            },
+            state_evidence: StateEvidence::new("test", "child_state"),
+            verification_evidence: VerificationEvidence::default(),
+        };
+
+        // Verify scope subset check passes
+        let parent_scopes = root.claims.all_scopes();
+        assert!(is_scope_subset_of_any(
+            &parent_scopes,
+            "browser.navigate",
+            "https://amazon.com/products"
+        ));
+
+        let derived = issue_derived_mandate(&signer, &child_request, &root, 60);
+        assert_eq!(derived.claims.principal_id, "agent:scraper");
+        assert_eq!(derived.claims.action, "browser.navigate");
+        assert_eq!(derived.claims.delegation_depth, 1);
+    }
+
+    #[test]
+    fn test_multi_scope_delegation_fs_scope() {
+        let signer = test_signer();
+        let root = create_multi_scope_root_mandate(&signer);
+
+        // Child requests fs scope - should succeed
+        let child_request = ActionRequest {
+            principal: PrincipalRef::new("agent:analyst"),
+            action_spec: ActionSpec {
+                action: "fs.write".to_string(),
+                resource: "/workspace/data/analysis.json".to_string(),
+                intent: "write analysis".to_string(),
+                scopes: Vec::new(),
+            },
+            state_evidence: StateEvidence::new("test", "child_state"),
+            verification_evidence: VerificationEvidence::default(),
+        };
+
+        // Verify scope subset check passes
+        let parent_scopes = root.claims.all_scopes();
+        assert!(is_scope_subset_of_any(
+            &parent_scopes,
+            "fs.write",
+            "/workspace/data/analysis.json"
+        ));
+
+        let derived = issue_derived_mandate(&signer, &child_request, &root, 60);
+        assert_eq!(derived.claims.principal_id, "agent:analyst");
+        assert_eq!(derived.claims.action, "fs.write");
+    }
+
+    #[test]
+    fn test_multi_scope_delegation_denied_for_unmatched_scope() {
+        let signer = test_signer();
+        let root = create_multi_scope_root_mandate(&signer);
+
+        // Child requests network scope - should fail (not in parent's scopes)
+        let parent_scopes = root.claims.all_scopes();
+        assert!(!is_scope_subset_of_any(
+            &parent_scopes,
+            "network.connect",
+            "tcp://internal:3306"
+        ));
     }
 }

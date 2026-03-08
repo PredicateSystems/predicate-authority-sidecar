@@ -146,7 +146,8 @@ async fn test_authorize_deny_rule() {
     let resp: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
 
     assert_eq!(resp["allowed"], false);
-    assert_eq!(resp["reason"], "explicit_deny");
+    // Multi-scope now includes scope details in reason
+    assert!(resp["reason"].as_str().unwrap().contains("explicit_deny"));
 }
 
 #[tokio::test]
@@ -343,7 +344,11 @@ async fn test_authorize_with_labels() {
     let resp: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
 
     assert_eq!(resp["allowed"], false);
-    assert_eq!(resp["reason"], "missing_required_verification");
+    // Multi-scope now includes scope details in reason
+    assert!(resp["reason"]
+        .as_str()
+        .unwrap()
+        .contains("missing_required_verification"));
     assert!(resp["missing_labels"].as_array().is_some());
 }
 
@@ -615,6 +620,7 @@ async fn test_execute_with_stored_mandate() {
             principal_id: "agent:test".to_string(),
             action: "fs.read".to_string(),
             resource: "/tmp/test-execute.txt".to_string(),
+            scopes: Vec::new(),
             intent_hash: "hash123".to_string(),
             state_hash: "state123".to_string(),
             issued_at_epoch_s: now,
@@ -708,6 +714,7 @@ async fn test_execute_action_mismatch() {
             principal_id: "agent:test".to_string(),
             action: "fs.read".to_string(),
             resource: "/src/file.ts".to_string(),
+            scopes: Vec::new(),
             intent_hash: "hash123".to_string(),
             state_hash: "state123".to_string(),
             issued_at_epoch_s: now,
@@ -794,6 +801,7 @@ async fn test_execute_resource_mismatch() {
             principal_id: "agent:test".to_string(),
             action: "fs.read".to_string(),
             resource: "/src/index.ts".to_string(),
+            scopes: Vec::new(),
             intent_hash: "hash123".to_string(),
             state_hash: "state123".to_string(),
             issued_at_epoch_s: now,
@@ -876,6 +884,7 @@ async fn test_execute_expired_mandate() {
             principal_id: "agent:test".to_string(),
             action: "fs.read".to_string(),
             resource: "/src/file.ts".to_string(),
+            scopes: Vec::new(),
             intent_hash: "hash123".to_string(),
             state_hash: "state123".to_string(),
             issued_at_epoch_s: now - 600,

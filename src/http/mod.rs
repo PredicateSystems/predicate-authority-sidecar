@@ -23,7 +23,8 @@ use crate::bridge::IdpBridgeProvider;
 use crate::identity::{LedgerQueueItem, LocalIdentityRegistry, TaskIdentityRecord};
 use crate::mandate::MandateStore;
 use crate::models::{
-    AuthorizationDecision, PolicyRule, SidecarAuthorizeRequest, SidecarAuthorizeResponse,
+    ActionSpec, AuthorizationDecision, PolicyRule, ScopeAuthorizationResult,
+    SidecarAuthorizeRequest, SidecarAuthorizeResponse,
 };
 use crate::policy::PolicyEngine;
 use crate::proof::InMemoryProofLedger;
@@ -160,6 +161,20 @@ async fn authorize_handler(
     // Start timing
     let start = std::time::Instant::now();
 
+    // Validate request has at least one scope
+    if let Err(e) = request.validate() {
+        let response = SidecarAuthorizeResponse {
+            allowed: false,
+            reason: format!("INVALID_REQUEST: {}", e),
+            mandate_id: None,
+            mandate_token: None,
+            violated_rule: None,
+            missing_labels: vec![],
+            scopes_authorized: vec![],
+        };
+        return (StatusCode::BAD_REQUEST, Json(response));
+    }
+
     // Validate bearer token if IdP bridge is configured and requires validation
     if let Some(ref bridge) = state.idp_bridge {
         if bridge.requires_token() {
@@ -177,6 +192,7 @@ async fn authorize_handler(
                         mandate_token: None,
                         violated_rule: None,
                         missing_labels: vec![],
+                        scopes_authorized: vec![],
                     };
                     return (StatusCode::UNAUTHORIZED, Json(response));
                 }
@@ -204,6 +220,7 @@ async fn authorize_handler(
                         mandate_token: None,
                         violated_rule: None,
                         missing_labels: vec![],
+                        scopes_authorized: vec![],
                     };
                     return (StatusCode::UNAUTHORIZED, Json(response));
                 }
@@ -211,36 +228,118 @@ async fn authorize_handler(
         }
     }
 
-    // Evaluate policy
-    let result = state.policy_engine.evaluate(&request);
+    // Get all scopes from request (single or multi)
+    let request_scopes = request.all_scopes();
+    let is_multi_scope = request.is_multi_scope();
+
+    // For multi-scope requests, evaluate each scope against policy
+    // All scopes must be allowed for the request to succeed
+    let mut all_allowed = true;
+    let mut first_denial_reason = None;
+    let mut first_violated_rule = None;
+    let mut all_missing_labels: Vec<String> = vec![];
+    let mut scopes_authorized: Vec<ScopeAuthorizationResult> = vec![];
+
+    for scope in &request_scopes {
+        // Create a single-scope request for policy evaluation
+        let single_request = SidecarAuthorizeRequest {
+            principal: request.principal.clone(),
+            action: scope.action.clone(),
+            resource: scope.resource.clone(),
+            scopes: vec![],
+            intent_hash: request.intent_hash.clone(),
+            context: request.context.clone(),
+            labels: request.labels.clone(),
+        };
+
+        let result = state.policy_engine.evaluate(&single_request);
+
+        if result.allowed {
+            scopes_authorized.push(ScopeAuthorizationResult {
+                action: scope.action.clone(),
+                resource: scope.resource.clone(),
+                matched_rule: result.matched_rule.clone(),
+            });
+        } else {
+            all_allowed = false;
+            if first_denial_reason.is_none() {
+                first_denial_reason = Some(format!(
+                    "{} (action: {}, resource: {})",
+                    result.reason, scope.action, scope.resource
+                ));
+                first_violated_rule = result.matched_rule.clone();
+            }
+            all_missing_labels.extend(result.missing_labels.clone());
+        }
+    }
 
     // Calculate latency
     let latency_us = start.elapsed().as_micros() as u64;
 
+    // For audit logging, use first scope as representative (or all scopes in multi-scope case)
+    let (audit_action, audit_resource) = if is_multi_scope {
+        (
+            format!("multi-scope[{}]", request_scopes.len()),
+            request_scopes
+                .iter()
+                .map(|s| s.action.clone())
+                .collect::<Vec<_>>()
+                .join(","),
+        )
+    } else {
+        (request.action.clone(), request.resource.clone())
+    };
+
     // Record to proof ledger with latency
     state.proof_ledger.record_decision_with_latency(
         &request.principal,
-        &request.action,
-        &request.resource,
-        result.allowed,
-        result.reason.clone(),
-        None, // Mandate will be added in Phase 4
+        &audit_action,
+        &audit_resource,
+        all_allowed,
+        if all_allowed {
+            crate::models::AuthorizationReason::Allowed
+        } else {
+            crate::models::AuthorizationReason::ExplicitDeny
+        },
+        None, // Mandate will be added below
         Some(latency_us),
     );
 
-    let mut decision: AuthorizationDecision = result.into();
+    // Build response
+    let mut decision = AuthorizationDecision {
+        allowed: all_allowed,
+        reason: if all_allowed {
+            crate::models::AuthorizationReason::Allowed
+        } else {
+            crate::models::AuthorizationReason::ExplicitDeny
+        },
+        mandate: None,
+        violated_rule: first_violated_rule,
+        missing_labels: all_missing_labels,
+    };
 
     // If delegation is enabled and authorization allowed, issue a mandate
     if decision.allowed {
         if let Some(ref delegation_state) = state.delegation_state {
             // Build the ActionRequest structure for mandate signing
             let principal_ref = crate::models::PrincipalRef::new(&request.principal);
-            let action_spec = crate::models::ActionSpec {
-                action: request.action.clone(),
-                resource: request.resource.clone(),
-                intent: request.intent_hash.clone().unwrap_or_default(),
+
+            // Build ActionSpec - use multi-scope if multiple scopes
+            let action_spec = if is_multi_scope {
+                ActionSpec::multi(
+                    request_scopes.clone(),
+                    &request.intent_hash.clone().unwrap_or_default(),
+                )
+            } else {
+                ActionSpec::single(
+                    &request.action,
+                    &request.resource,
+                    &request.intent_hash.clone().unwrap_or_default(),
+                )
             };
-            let state_evidence = crate::models::StateEvidence::new("authorize", &request.action);
+
+            let state_evidence =
+                crate::models::StateEvidence::new("authorize", &action_spec.action);
             let action_request = crate::models::ActionRequest {
                 principal: principal_ref,
                 action_spec,
@@ -251,14 +350,33 @@ async fn authorize_handler(
             // Issue root mandate (no parent)
             let mandate = delegation_state.mandate_signer.issue(&action_request, None);
             debug!(
-                "Issued mandate for {}: mandate_id={}",
-                request.principal, mandate.claims.mandate_id
+                "Issued mandate for {}: mandate_id={}, scopes={}",
+                request.principal,
+                mandate.claims.mandate_id,
+                if is_multi_scope {
+                    format!("{} scopes", request_scopes.len())
+                } else {
+                    "1 scope".to_string()
+                }
             );
             decision.mandate = Some(mandate);
         }
     }
 
-    let response: SidecarAuthorizeResponse = decision.into();
+    // Build response with scopes_authorized
+    let mut response: SidecarAuthorizeResponse = decision.into();
+
+    // Override scopes_authorized with our tracked results
+    if all_allowed && !scopes_authorized.is_empty() {
+        response.scopes_authorized = scopes_authorized;
+    }
+
+    // Override reason with detailed denial reason for multi-scope
+    if !all_allowed {
+        if let Some(denial_reason) = first_denial_reason {
+            response.reason = denial_reason;
+        }
+    }
 
     // Return 200 for allowed, 403 for denied (matches Python sidecar behavior)
     let status = if response.allowed {
@@ -960,5 +1078,177 @@ mod tests {
         assert!(!response_json["allowed"].as_bool().unwrap());
         assert!(response_json["mandate_token"].is_null());
         assert!(response_json["mandate_id"].is_null());
+    }
+
+    // --- Multi-scope authorization tests ---
+
+    fn test_state_with_multi_scope_policy() -> AppState {
+        let rules = vec![
+            PolicyRule {
+                name: "allow-browser".to_string(),
+                effect: PolicyEffect::Allow,
+                principals: vec!["agent:orchestrator".to_string()],
+                actions: vec!["browser.*".to_string()],
+                resources: vec!["https://amazon.com/*".to_string()],
+                required_labels: vec![],
+                max_delegation_depth: None,
+            },
+            PolicyRule {
+                name: "allow-fs".to_string(),
+                effect: PolicyEffect::Allow,
+                principals: vec!["agent:orchestrator".to_string()],
+                actions: vec!["fs.*".to_string()],
+                resources: vec!["/workspace/**".to_string()],
+                required_labels: vec![],
+                max_delegation_depth: None,
+            },
+        ];
+        let policy = PolicyEngine::with_rules(rules);
+        policy.set_ssrf_protection(None);
+
+        let delegation_state = DelegationState::new(test_signer()).with_max_depth(5);
+        AppState::new(policy, "test").with_delegation(delegation_state)
+    }
+
+    #[tokio::test]
+    async fn test_authorize_multi_scope_all_allowed() {
+        let app = create_router(test_state_with_multi_scope_policy());
+
+        let body = r#"{
+            "principal": "agent:orchestrator",
+            "scopes": [
+                {"action": "browser.navigate", "resource": "https://amazon.com/products"},
+                {"action": "fs.write", "resource": "/workspace/data/output.json"}
+            ],
+            "intent_hash": "orchestrate:ecommerce:123"
+        }"#;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/authorize")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let response_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+
+        assert!(response_json["allowed"].as_bool().unwrap());
+        assert!(response_json["mandate_token"].is_string());
+        assert!(!response_json["mandate_token"].as_str().unwrap().is_empty());
+
+        // Verify scopes_authorized contains both scopes
+        let scopes_authorized = response_json["scopes_authorized"].as_array().unwrap();
+        assert_eq!(scopes_authorized.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_multi_scope_partial_denied() {
+        let app = create_router(test_state_with_multi_scope_policy());
+
+        // One scope allowed, one denied (network.* not in policy)
+        let body = r#"{
+            "principal": "agent:orchestrator",
+            "scopes": [
+                {"action": "browser.navigate", "resource": "https://amazon.com/products"},
+                {"action": "network.connect", "resource": "tcp://internal:3306"}
+            ],
+            "intent_hash": "orchestrate:mixed:123"
+        }"#;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/authorize")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let response_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+
+        assert!(!response_json["allowed"].as_bool().unwrap());
+        assert!(response_json["mandate_token"].is_null());
+        // Reason should mention which scope failed
+        assert!(response_json["reason"]
+            .as_str()
+            .unwrap()
+            .contains("network.connect"));
+    }
+
+    #[tokio::test]
+    async fn test_authorize_empty_request_returns_400() {
+        let app = create_router(test_state_with_multi_scope_policy());
+
+        // No action or scopes provided
+        let body = r#"{"principal": "agent:orchestrator"}"#;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/authorize")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let response_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+
+        assert!(!response_json["allowed"].as_bool().unwrap());
+        assert!(response_json["reason"]
+            .as_str()
+            .unwrap()
+            .contains("INVALID_REQUEST"));
+    }
+
+    #[tokio::test]
+    async fn test_authorize_single_scope_still_works() {
+        let app = create_router(test_state_with_multi_scope_policy());
+
+        // Traditional single-scope request (backward compatible)
+        let body = r#"{
+            "principal": "agent:orchestrator",
+            "action": "browser.click",
+            "resource": "https://amazon.com/buy-button"
+        }"#;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/authorize")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let response_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+
+        assert!(response_json["allowed"].as_bool().unwrap());
+        assert!(response_json["mandate_token"].is_string());
     }
 }
