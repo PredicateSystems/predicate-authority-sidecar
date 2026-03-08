@@ -527,7 +527,7 @@ The `policies/` directory contains ready-to-use templates:
 
 Check if an action is authorized.
 
-Request:
+**Single-scope request** (backward compatible):
 ```json
 {
   "principal": "agent:web",
@@ -538,7 +538,21 @@ Request:
 }
 ```
 
-Response (allowed):
+**Multi-scope request** (new in v0.7.0):
+```json
+{
+  "principal": "agent:orchestrator",
+  "scopes": [
+    {"action": "browser.*", "resource": "https://amazon.com/*"},
+    {"action": "fs.*", "resource": "/workspace/**"}
+  ],
+  "intent_hash": "orchestrate:ecommerce:run-123"
+}
+```
+
+Multi-scope authorization allows an orchestrator to request a single mandate covering multiple action/resource pairs. All scopes must be allowed for the request to succeed.
+
+Response (allowed, single-scope):
 ```json
 {
   "allowed": true,
@@ -549,14 +563,18 @@ Response (allowed):
 }
 ```
 
-Response (allowed, with delegation enabled):
+Response (allowed, multi-scope with delegation enabled):
 ```json
 {
   "allowed": true,
   "reason": "allowed",
   "mandate_id": "m_7f3a2b1c",
   "mandate_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "missing_labels": []
+  "missing_labels": [],
+  "scopes_authorized": [
+    {"action": "browser.*", "resource": "https://amazon.com/*", "matched_rule": "allow-browser"},
+    {"action": "fs.*", "resource": "/workspace/**", "matched_rule": "allow-fs"}
+  ]
 }
 ```
 
@@ -564,7 +582,7 @@ Response (denied):
 ```json
 {
   "allowed": false,
-  "reason": "explicit_deny",
+  "reason": "explicit_deny (action: network.connect, resource: tcp://internal:3306)",
   "missing_labels": []
 }
 ```
@@ -847,6 +865,55 @@ Response:
 - `browser.*` can delegate to `browser.click` (narrower)
 - `browser.click` cannot delegate to `browser.*` (broader - rejected)
 - `https://*` can delegate to `https://example.com/*`
+
+### Multi-Scope Mandates (v0.7.0+)
+
+Multi-scope mandates allow an orchestrator to hold a single mandate covering multiple action/resource pairs. When delegating from a multi-scope parent, the child scope must be a subset of **at least one** parent scope (OR semantics):
+
+```
+Parent scopes: [browser.*, fs.*]
+Child: browser.click → ALLOWED (matches browser.*)
+Child: fs.write → ALLOWED (matches fs.*)
+Child: network.* → DENIED (matches none)
+```
+
+**Example: Multi-scope orchestrator**
+
+```python
+# Orchestrator requests single multi-scope mandate
+response = await client.authorize(
+    principal="agent:orchestrator",
+    scopes=[
+        {"action": "browser.*", "resource": "https://amazon.com/*"},
+        {"action": "fs.*", "resource": "/workspace/**"},
+    ],
+    intent_hash="orchestrate:ecommerce:run-123",
+)
+
+# Single mandate for all delegations
+orchestrator_token = response.mandate_token
+
+# Delegate browser scope to scraper
+scraper_response = await client.delegate(
+    parent_mandate_token=orchestrator_token,
+    delegate_to="agent:scraper",
+    action_scope="browser.navigate",
+    resource_scope="https://amazon.com/products",
+)
+
+# Delegate fs scope to analyst (same parent token!)
+analyst_response = await client.delegate(
+    parent_mandate_token=orchestrator_token,
+    delegate_to="agent:analyst",
+    action_scope="fs.write",
+    resource_scope="/workspace/data/analysis.json",
+)
+```
+
+Benefits of multi-scope mandates:
+- **Unified audit trail** - One mandate ID for entire orchestration
+- **Cascade revocation** - Revoking orchestrator revokes all child delegations
+- **Simpler code** - No need to track which mandate to use for which delegation
 
 ### Depth Limits
 

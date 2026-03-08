@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use crate::models::{ActionRequest, MandateClaims, SignedMandate};
+use crate::models::{ActionRequest, MandateClaims, ScopeSpec, SignedMandate};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -257,11 +257,19 @@ impl LocalMandateSigner {
             parent_mandate,
         );
 
+        // Get scopes - use the scopes array if multi-scope, otherwise empty (will use action/resource)
+        let scopes: Vec<ScopeSpec> = if request.action_spec.is_multi_scope() {
+            request.action_spec.scopes.clone()
+        } else {
+            Vec::new()
+        };
+
         let claims = MandateClaims {
             mandate_id: mandate_id.clone(),
             principal_id: request.principal.principal_id.clone(),
             action: request.action_spec.action.clone(),
             resource: request.action_spec.resource.clone(),
+            scopes,
             intent_hash,
             state_hash: request.state_evidence.state_hash.clone(),
             issued_at_epoch_s: issued_at,
@@ -637,6 +645,7 @@ mod tests {
                 action: "browser.click".to_string(),
                 resource: "https://example.com".to_string(),
                 intent: "click button".to_string(),
+                scopes: Vec::new(),
             },
             state_evidence: StateEvidence::new("web", "state123"),
             verification_evidence: VerificationEvidence {
@@ -680,6 +689,7 @@ mod tests {
                 action: "task.delegate".to_string(),
                 resource: "worker:queue".to_string(),
                 intent: "delegate task".to_string(),
+                scopes: Vec::new(),
             },
             state_evidence: StateEvidence::new("non-web", "root-state"),
             verification_evidence: VerificationEvidence {
@@ -697,6 +707,7 @@ mod tests {
                 action: "job.execute".to_string(),
                 resource: "queue://jobs".to_string(),
                 intent: "execute job".to_string(),
+                scopes: Vec::new(),
             },
             state_evidence: StateEvidence::new("non-web", "worker-state"),
             verification_evidence: VerificationEvidence {
@@ -1055,6 +1066,7 @@ mod mandate_store_tests {
                 principal_id: "agent:test".to_string(),
                 action: action.to_string(),
                 resource: resource.to_string(),
+                scopes: Vec::new(), // Single-scope mandate
                 intent_hash: "hash123".to_string(),
                 state_hash: "state123".to_string(),
                 issued_at_epoch_s: SystemTime::now()

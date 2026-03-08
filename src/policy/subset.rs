@@ -9,8 +9,22 @@
 //! - Wildcard narrowing: `"browser.click"` is subset of `"browser.*"`
 //! - Wildcard NOT subset of specific: `"browser.*"` is NOT subset of `"browser.click"`
 //! - Universal wildcard: `"browser.click"` is subset of `"*"`
+//!
+//! # Multi-Scope Support
+//!
+//! When a parent mandate has multiple scopes, the child scope must be a subset
+//! of **at least one** parent scope (OR semantics):
+//!
+//! ```text
+//! Parent: [browser.*, fs.*]
+//! Child: browser.click → ALLOWED (matches browser.*)
+//! Child: fs.write → ALLOWED (matches fs.*)
+//! Child: network.* → DENIED (matches none)
+//! ```
 
 use glob::Pattern;
+
+use crate::models::ScopeSpec;
 
 /// Determines if `requested_action` is a valid subset of `parent_action`.
 ///
@@ -62,6 +76,71 @@ pub fn is_scope_subset(
 ) -> bool {
     is_action_subset(parent_action, requested_action)
         && is_resource_subset(parent_resource, requested_resource)
+}
+
+/// Validates if a requested scope is a subset of ANY of the parent scopes.
+///
+/// Used for multi-scope mandates where the child scope must match
+/// at least one parent scope (OR semantics).
+///
+/// # Arguments
+/// * `parent_scopes` - List of scopes from the parent mandate
+/// * `requested_action` - The action being requested by the child
+/// * `requested_resource` - The resource being requested by the child
+///
+/// # Returns
+/// `true` if the requested scope is a valid subset of at least one parent scope
+///
+/// # Examples
+/// ```
+/// use predicate_authorityd::policy::subset::is_scope_subset_of_any;
+/// use predicate_authorityd::models::ScopeSpec;
+///
+/// let parent_scopes = vec![
+///     ScopeSpec::new("browser.*", "https://*"),
+///     ScopeSpec::new("fs.*", "/workspace/**"),
+/// ];
+///
+/// // browser.click matches browser.*
+/// assert!(is_scope_subset_of_any(&parent_scopes, "browser.click", "https://example.com"));
+///
+/// // fs.read matches fs.*
+/// assert!(is_scope_subset_of_any(&parent_scopes, "fs.read", "/workspace/data/file.txt"));
+///
+/// // network.* matches none
+/// assert!(!is_scope_subset_of_any(&parent_scopes, "network.connect", "tcp://server:8080"));
+/// ```
+pub fn is_scope_subset_of_any(
+    parent_scopes: &[ScopeSpec],
+    requested_action: &str,
+    requested_resource: &str,
+) -> bool {
+    parent_scopes.iter().any(|parent_scope| {
+        is_scope_subset(
+            &parent_scope.action,
+            &parent_scope.resource,
+            requested_action,
+            requested_resource,
+        )
+    })
+}
+
+/// Find which parent scope (if any) the requested scope is a subset of.
+///
+/// Returns the first matching parent scope, or `None` if no match found.
+pub fn find_matching_parent_scope<'a>(
+    parent_scopes: &'a [ScopeSpec],
+    requested_action: &str,
+    requested_resource: &str,
+) -> Option<&'a ScopeSpec> {
+    parent_scopes.iter().find(|parent_scope| {
+        is_scope_subset(
+            &parent_scope.action,
+            &parent_scope.resource,
+            requested_action,
+            requested_resource,
+        )
+    })
 }
 
 /// Core pattern subset validation logic.
@@ -320,6 +399,152 @@ mod tests {
         assert!(!is_resource_subset(
             "/home/user/data/file.txt",
             "/home/*/data/*"
+        ));
+    }
+
+    // --- Multi-scope tests ---
+
+    #[test]
+    fn test_scope_subset_of_any_matches_first() {
+        let parent_scopes = vec![
+            ScopeSpec::new("browser.*", "https://*"),
+            ScopeSpec::new("fs.*", "/workspace/**"),
+        ];
+
+        // browser.click matches browser.*
+        assert!(is_scope_subset_of_any(
+            &parent_scopes,
+            "browser.click",
+            "https://example.com"
+        ));
+    }
+
+    #[test]
+    fn test_scope_subset_of_any_matches_second() {
+        let parent_scopes = vec![
+            ScopeSpec::new("browser.*", "https://*"),
+            ScopeSpec::new("fs.*", "/workspace/**"),
+        ];
+
+        // fs.read matches fs.*
+        assert!(is_scope_subset_of_any(
+            &parent_scopes,
+            "fs.read",
+            "/workspace/data/file.txt"
+        ));
+    }
+
+    #[test]
+    fn test_scope_subset_of_any_no_match() {
+        let parent_scopes = vec![
+            ScopeSpec::new("browser.*", "https://*"),
+            ScopeSpec::new("fs.*", "/workspace/**"),
+        ];
+
+        // network.* matches none
+        assert!(!is_scope_subset_of_any(
+            &parent_scopes,
+            "network.connect",
+            "tcp://server:8080"
+        ));
+    }
+
+    #[test]
+    fn test_scope_subset_of_any_empty_parent() {
+        let parent_scopes: Vec<ScopeSpec> = vec![];
+
+        // Nothing matches empty scopes
+        assert!(!is_scope_subset_of_any(
+            &parent_scopes,
+            "browser.click",
+            "https://example.com"
+        ));
+    }
+
+    #[test]
+    fn test_scope_subset_of_any_action_mismatch() {
+        let parent_scopes = vec![ScopeSpec::new("browser.*", "https://*")];
+
+        // fs.* action doesn't match browser.* even if resource would match
+        assert!(!is_scope_subset_of_any(
+            &parent_scopes,
+            "fs.read",
+            "https://example.com"
+        ));
+    }
+
+    #[test]
+    fn test_scope_subset_of_any_resource_mismatch() {
+        let parent_scopes = vec![ScopeSpec::new("browser.*", "https://*")];
+
+        // browser.click action matches but resource doesn't
+        assert!(!is_scope_subset_of_any(
+            &parent_scopes,
+            "browser.click",
+            "file:///local/path"
+        ));
+    }
+
+    #[test]
+    fn test_find_matching_parent_scope() {
+        let parent_scopes = vec![
+            ScopeSpec::new("browser.*", "https://*"),
+            ScopeSpec::new("fs.*", "/workspace/**"),
+        ];
+
+        let matched =
+            find_matching_parent_scope(&parent_scopes, "fs.write", "/workspace/output.txt");
+        assert!(matched.is_some());
+        let matched = matched.unwrap();
+        assert_eq!(matched.action, "fs.*");
+        assert_eq!(matched.resource, "/workspace/**");
+    }
+
+    #[test]
+    fn test_find_matching_parent_scope_no_match() {
+        let parent_scopes = vec![
+            ScopeSpec::new("browser.*", "https://*"),
+            ScopeSpec::new("fs.*", "/workspace/**"),
+        ];
+
+        let matched = find_matching_parent_scope(&parent_scopes, "cli.exec", "ls -la");
+        assert!(matched.is_none());
+    }
+
+    #[test]
+    fn test_multi_scope_real_world_crewai_example() {
+        // CrewAI orchestrator has browser and fs scopes
+        let orchestrator_scopes = vec![
+            ScopeSpec::new("browser.*", "https://www.amazon.com/*"),
+            ScopeSpec::new("fs.*", "**/workspace/data/**"),
+        ];
+
+        // Scraper agent wants to navigate to Amazon
+        assert!(is_scope_subset_of_any(
+            &orchestrator_scopes,
+            "browser.navigate",
+            "https://www.amazon.com/s?k=laptop"
+        ));
+
+        // Analyst agent wants to write to workspace
+        assert!(is_scope_subset_of_any(
+            &orchestrator_scopes,
+            "fs.write",
+            "/app/workspace/data/analysis.json"
+        ));
+
+        // Random agent trying to access different site - denied
+        assert!(!is_scope_subset_of_any(
+            &orchestrator_scopes,
+            "browser.navigate",
+            "https://www.evil.com/steal"
+        ));
+
+        // Random agent trying network access - denied
+        assert!(!is_scope_subset_of_any(
+            &orchestrator_scopes,
+            "network.connect",
+            "tcp://internal:3306"
         ));
     }
 }
