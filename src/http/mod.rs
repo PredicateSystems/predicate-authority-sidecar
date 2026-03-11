@@ -359,6 +359,16 @@ async fn authorize_handler(
                     "1 scope".to_string()
                 }
             );
+
+            // Store mandate in mandate store for /v1/execute endpoint
+            if let Some(ref mandate_store) = state.mandate_store {
+                mandate_store.store(mandate.clone());
+                debug!(
+                    "Stored mandate {} for execution proxying",
+                    mandate.claims.mandate_id
+                );
+            }
+
             decision.mandate = Some(mandate);
         }
     }

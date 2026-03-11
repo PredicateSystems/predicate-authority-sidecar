@@ -629,6 +629,13 @@ async fn main() -> anyhow::Result<()> {
             "Chain delegation enabled (max_depth: {}, ttl: {}s)",
             cli.max_delegation_depth, delegation_ttl_s
         );
+
+        // Add mandate store for /v1/execute endpoint support
+        // This enables execution proxying (zero-trust mode)
+        use predicate_authorityd::mandate::MandateStore;
+        let mandate_store = MandateStore::new();
+        state = state.with_mandate_store(mandate_store);
+        info!("Execution proxying enabled (/v1/execute endpoint)");
     }
 
     // Initialize control-plane client if in cloud_connected mode
