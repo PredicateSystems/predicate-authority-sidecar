@@ -203,6 +203,29 @@ struct Cli {
     /// Maximum delegation depth (default: 5)
     #[arg(long, env = "PREDICATE_MAX_DELEGATION_DEPTH", default_value = "5")]
     max_delegation_depth: u32,
+
+    // --- Policy reload security options ---
+    /// Secret required for /policy/reload endpoint (bearer token)
+    #[arg(long, env = "PREDICATE_POLICY_RELOAD_SECRET")]
+    policy_reload_secret: Option<String>,
+
+    /// Disable the /policy/reload endpoint entirely
+    #[arg(long, env = "PREDICATE_DISABLE_POLICY_RELOAD")]
+    disable_policy_reload: bool,
+
+    // --- SSRF protection options ---
+    /// Allowed endpoints that bypass SSRF protection (comma-separated, host:port format)
+    /// Example: --ssrf-allow 172.30.192.1:11434,127.0.0.1:9200
+    #[arg(
+        long = "ssrf-allow",
+        env = "PREDICATE_SSRF_ALLOW",
+        value_delimiter = ','
+    )]
+    ssrf_allow: Vec<String>,
+
+    /// Disable SSRF protection entirely (not recommended)
+    #[arg(long, env = "PREDICATE_SSRF_DISABLED")]
+    ssrf_disabled: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -461,6 +484,28 @@ async fn main() -> anyhow::Result<()> {
     // Initialize policy engine
     let policy_engine = PolicyEngine::new();
 
+    // Configure SSRF protection
+    let ssrf_disabled = cli.ssrf_disabled || file_config.ssrf.disabled;
+    let ssrf_allowed_endpoints: Vec<String> = if !cli.ssrf_allow.is_empty() {
+        cli.ssrf_allow.clone()
+    } else {
+        file_config.ssrf.allowed_endpoints.clone()
+    };
+
+    if ssrf_disabled {
+        policy_engine.set_ssrf_protection(None);
+        warn!("SSRF protection disabled - all endpoints allowed");
+    } else if !ssrf_allowed_endpoints.is_empty() {
+        use predicate_authorityd::ssrf::SsrfProtection;
+        let ssrf = SsrfProtection::new().with_allowed_endpoints(ssrf_allowed_endpoints.clone());
+        policy_engine.set_ssrf_protection(Some(ssrf));
+        info!(
+            "SSRF protection enabled with {} allowed endpoints: {:?}",
+            ssrf_allowed_endpoints.len(),
+            ssrf_allowed_endpoints
+        );
+    }
+
     // Load policy file if specified (supports JSON and YAML formats)
     if let Some(ref policy_path) = policy_file {
         let format = policy_loader::detect_format(policy_path);
@@ -503,8 +548,22 @@ async fn main() -> anyhow::Result<()> {
         info!("Audit mode enabled via --audit-mode flag");
     }
 
+    // Merge policy reload config
+    let policy_reload_secret = cli
+        .policy_reload_secret
+        .or(file_config.policy.reload_secret);
+    let disable_policy_reload = cli.disable_policy_reload || file_config.policy.disable_reload;
+
     // Create application state
-    let mut state = AppState::new(policy_engine, &mode);
+    let mut state = AppState::new(policy_engine, &mode)
+        .with_policy_reload_secret(policy_reload_secret.clone())
+        .with_policy_reload_disabled(disable_policy_reload);
+
+    if disable_policy_reload {
+        info!("Policy reload endpoint disabled");
+    } else if policy_reload_secret.is_some() {
+        info!("Policy reload endpoint protected with bearer token");
+    }
 
     // Initialize IdP bridge based on identity_mode
     let local_idp_signing_key = std::env::var(&local_idp_signing_key_env)

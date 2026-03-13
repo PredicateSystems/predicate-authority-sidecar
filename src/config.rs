@@ -19,6 +19,9 @@ pub struct Config {
     /// Policy configuration
     pub policy: PolicyConfig,
 
+    /// SSRF protection configuration
+    pub ssrf: SsrfConfig,
+
     /// Identity registry configuration
     pub identity: IdentityConfig,
 
@@ -30,6 +33,18 @@ pub struct Config {
 
     /// Logging configuration
     pub logging: LoggingConfig,
+}
+
+/// SSRF protection configuration
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SsrfConfig {
+    /// Allowed endpoints that bypass SSRF protection (host:port format)
+    /// Example: ["172.30.192.1:11434", "127.0.0.1:9200"]
+    pub allowed_endpoints: Vec<String>,
+
+    /// Disable SSRF protection entirely (not recommended)
+    pub disabled: bool,
 }
 
 /// Server configuration
@@ -72,6 +87,14 @@ pub struct PolicyConfig {
 
     /// Hot-reload check interval in seconds
     pub hot_reload_interval_s: u64,
+
+    /// Secret required for /policy/reload endpoint (bearer token)
+    /// If set, requests must include `Authorization: Bearer <secret>`
+    pub reload_secret: Option<String>,
+
+    /// Disable the /policy/reload endpoint entirely
+    /// If true, the endpoint returns 404
+    pub disable_reload: bool,
 }
 
 /// Identity registry configuration
@@ -361,6 +384,14 @@ shutdown_timeout_s = 30
 # file = "/path/to/policy.json"
 hot_reload = false
 hot_reload_interval_s = 30
+# reload_secret = "your-secret-here"  # Require bearer token for /policy/reload
+# disable_reload = false              # Set to true to disable /policy/reload entirely
+
+# SSRF Protection Configuration
+# By default, SSRF blocks private IPs, localhost, and cloud metadata endpoints
+[ssrf]
+# allowed_endpoints = ["172.30.192.1:11434", "127.0.0.1:9200"]  # Bypass SSRF for these
+# disabled = false  # Set to true to disable all SSRF protection (not recommended)
 
 [identity]
 # file = "~/.predicate/local-identity-registry.json"
