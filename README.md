@@ -242,7 +242,7 @@ Policies are JSON or YAML files with ALLOW/DENY rules:
 2. ALLOW rules checked (must match + have required_labels)
 3. Default DENY (fail-closed)
 
-**Bundled templates:** `strict.json`, `read-only.json`, `ci-cd.json`, `permissive.json`
+**Bundled templates:** `strict.json`, `read-only.json`, `ci-cd.json`, `permissive.json`, `secret-injection.json`
 
 ---
 
@@ -384,6 +384,84 @@ curl -X POST http://127.0.0.1:8787/v1/execute \
 - All executions logged to proof ledger with evidence hashes
 - `fs.delete` with `recursive: true` requires explicit policy allowlist
 - `env.read` only returns values for explicitly authorized keys in the policy
+
+---
+
+## Secret Injection
+
+Policy rules can inject secrets at execution time. Agents never see raw credentials—the sidecar substitutes environment variables when executing actions.
+
+```
+┌─────────┐     authorize     ┌──────────────┐     execute      ┌─────────┐
+│  Agent  │ ─────────────────▶│   Sidecar    │ ────────────────▶│ Backend │
+│         │  (no secrets)     │ inject: $KEY │  (with secrets)  │   API   │
+└─────────┘                   └──────────────┘                  └─────────┘
+```
+
+**Policy with header injection:**
+
+```json
+{
+  "rules": [
+    {
+      "name": "github-api-with-auth",
+      "effect": "allow",
+      "principals": ["agent:*"],
+      "actions": ["http.fetch"],
+      "resources": ["https://api.github.com/*"],
+      "inject_headers": {
+        "Authorization": "Bearer ${GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json"
+      }
+    }
+  ]
+}
+```
+
+**Policy with CLI environment injection:**
+
+```json
+{
+  "rules": [
+    {
+      "name": "aws-cli-with-credentials",
+      "effect": "allow",
+      "principals": ["agent:ops"],
+      "actions": ["cli.exec"],
+      "resources": ["aws", "aws *"],
+      "inject_env": {
+        "AWS_ACCESS_KEY_ID": "${AWS_ACCESS_KEY_ID}",
+        "AWS_SECRET_ACCESS_KEY": "${AWS_SECRET_ACCESS_KEY}",
+        "AWS_DEFAULT_REGION": "${AWS_REGION:-us-east-1}"
+      }
+    }
+  ]
+}
+```
+
+**Syntax:**
+- `${VAR_NAME}` — Substitute from environment (required)
+- `${VAR_NAME:-default}` — Use default if not set
+
+**Usage:**
+
+```bash
+# Set secrets as environment variables
+export GITHUB_TOKEN="ghp_xxxxxxxxxxxx"
+export AWS_ACCESS_KEY_ID="AKIAIOSFODNN7EXAMPLE"
+export AWS_SECRET_ACCESS_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+
+# Start sidecar - secrets stay here
+./predicate-authorityd --policy-file policy.json run
+```
+
+**Security benefits:**
+- Agents never see or handle raw secrets
+- Policy controls which secrets are injected where
+- Even compromised agents cannot exfiltrate credentials
+- Works with existing agents without code changes
+
+See [policies/secret-injection.json](policies/secret-injection.json) for a complete example.
 
 ---
 

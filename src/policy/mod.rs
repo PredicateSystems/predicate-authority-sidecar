@@ -81,9 +81,86 @@ impl PolicyEngine {
     }
 
     /// Replace all rules (thread-safe)
+    ///
+    /// This also validates secret injection references and logs warnings
+    /// for any missing environment variables.
     pub fn replace_rules(&self, rules: Vec<PolicyRule>) {
+        // Validate secret references before loading
+        self.validate_secret_references(&rules);
+
         let mut guard = self.rules.write();
         *guard = rules;
+    }
+
+    /// Validate that all environment variables referenced in inject_headers/inject_env
+    /// are available in the current environment.
+    ///
+    /// This logs warnings for missing variables but does not prevent policy loading,
+    /// since variables might be set later or use defaults.
+    fn validate_secret_references(&self, rules: &[PolicyRule]) {
+        use crate::secrets::validate_env_vars;
+
+        for rule in rules {
+            // Check inject_headers
+            if let Some(ref headers) = rule.inject_headers {
+                for (header_name, template) in headers {
+                    let missing = validate_env_vars(template);
+                    for var_name in missing {
+                        tracing::warn!(
+                            rule = %rule.name,
+                            header = %header_name,
+                            variable = %var_name,
+                            "Policy references undefined environment variable in inject_headers"
+                        );
+                    }
+                }
+            }
+
+            // Check inject_env
+            if let Some(ref env_vars) = rule.inject_env {
+                for (env_name, template) in env_vars {
+                    let missing = validate_env_vars(template);
+                    for var_name in missing {
+                        tracing::warn!(
+                            rule = %rule.name,
+                            env_key = %env_name,
+                            variable = %var_name,
+                            "Policy references undefined environment variable in inject_env"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Get all missing environment variables referenced by secret injection rules.
+    ///
+    /// Returns a vector of (rule_name, var_name) tuples for any missing variables.
+    pub fn get_missing_secret_references(&self) -> Vec<(String, String)> {
+        use crate::secrets::validate_env_vars;
+
+        let mut missing = Vec::new();
+        let rules = self.rules.read();
+
+        for rule in rules.iter() {
+            if let Some(ref headers) = rule.inject_headers {
+                for template in headers.values() {
+                    for var_name in validate_env_vars(template) {
+                        missing.push((rule.name.clone(), var_name));
+                    }
+                }
+            }
+
+            if let Some(ref env_vars) = rule.inject_env {
+                for template in env_vars.values() {
+                    for var_name in validate_env_vars(template) {
+                        missing.push((rule.name.clone(), var_name));
+                    }
+                }
+            }
+        }
+
+        missing
     }
 
     /// Get current rule count
