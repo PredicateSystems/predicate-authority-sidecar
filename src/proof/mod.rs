@@ -53,6 +53,14 @@ pub struct DecisionStats {
     pub min_latency_us: Option<u64>,
     /// Maximum latency seen (microseconds)
     pub max_latency_us: Option<u64>,
+    /// Number of times headers were injected (env var based)
+    pub headers_injected: u64,
+    /// Number of times headers were injected from files
+    pub headers_injected_from_file: u64,
+    /// Number of times env vars were injected (env var based)
+    pub env_vars_injected: u64,
+    /// Number of times env vars were injected from files
+    pub env_vars_injected_from_file: u64,
 }
 
 impl DecisionStats {
@@ -245,6 +253,27 @@ impl InMemoryProofLedger {
     /// Get current statistics
     pub fn stats(&self) -> DecisionStats {
         self.stats.read().clone()
+    }
+
+    /// Record secret injection events for metrics tracking
+    ///
+    /// # Arguments
+    /// * `headers_from_env` - Number of headers injected from env vars
+    /// * `headers_from_file` - Number of headers injected from files
+    /// * `env_vars_from_env` - Number of env vars injected from env vars
+    /// * `env_vars_from_file` - Number of env vars injected from files
+    pub fn record_injection(
+        &self,
+        headers_from_env: usize,
+        headers_from_file: usize,
+        env_vars_from_env: usize,
+        env_vars_from_file: usize,
+    ) {
+        let mut stats = self.stats.write();
+        stats.headers_injected += headers_from_env as u64;
+        stats.headers_injected_from_file += headers_from_file as u64;
+        stats.env_vars_injected += env_vars_from_env as u64;
+        stats.env_vars_injected_from_file += env_vars_from_file as u64;
     }
 
     /// Get total event count (events currently in memory)

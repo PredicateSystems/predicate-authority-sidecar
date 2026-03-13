@@ -1,0 +1,337 @@
+# Strict Policy - Recommended Production Default
+# Balanced security with workspace isolation and safe command allowlists
+
+rules:
+  # === DENY RULES (evaluated first) ===
+
+  - name: block-sensitive-files
+    effect: deny
+    principals: ["*"]
+    actions:
+      - fs.read
+      - fs.write
+      - fs.delete
+      - fs.*
+      - file.*
+      - read
+      - write
+      - edit
+    resources:
+      # Environment files
+      - "**/.env"
+      - "**/.env.*"
+      # Credentials and secrets
+      - "**/credentials*"
+      - "**/secrets*"
+      # Certificates and keys
+      - "**/*.pem"
+      - "**/*.key"
+      - "**/*.p12"
+      - "**/*.pfx"
+      # SSH
+      - "*/.ssh/*"
+      - "/etc/ssh/*"
+      # Cloud provider configs
+      - "*/.aws/*"
+      - "*/.azure/*"
+      - "*/.config/gcloud/*"
+      - "*/.kube/config"
+      # Package manager auth
+      - "*/.npmrc"
+      - "*/.pypirc"
+      - "*/.netrc"
+      - "*/.docker/config.json"
+      # System files
+      - "/etc/passwd"
+      - "/etc/shadow"
+      - "/etc/sudoers"
+      - "/etc/sudoers.d/*"
+
+  - name: block-outside-workspace
+    effect: deny
+    principals: ["*"]
+    actions:
+      - fs.write
+      - fs.delete
+      - fs.create
+      - fs.mkdir
+      - fs.rmdir
+      - fs.rename
+      - file.write
+      - file.delete
+      - write
+      - edit
+      - delete
+    resources:
+      # System directories
+      - "/etc/*"
+      - "/usr/*"
+      - "/bin/*"
+      - "/sbin/*"
+      - "/var/*"
+      - "/tmp/*"
+      # macOS system
+      - "/System/*"
+      - "/Library/*"
+      - "/Applications/*"
+      # Windows system
+      - "C:\\Windows\\*"
+      - "C:\\Program Files*"
+
+  - name: block-dangerous-commands
+    effect: deny
+    principals: ["*"]
+    actions:
+      - shell.exec
+      - bash
+      - exec
+      - run
+    resources:
+      # Destructive commands
+      - "rm -rf /*"
+      - "rm -rf /"
+      - "rm -rf ~/*"
+      - ":(){ :|:& };:*"
+      - "dd if=/dev/zero*"
+      - "mkfs*"
+      - "> /dev/sd*"
+      # Privilege escalation
+      - "sudo *"
+      - "su *"
+      - "doas *"
+      - "pkexec *"
+      - "runas *"
+      # Permission changes
+      - "chmod 777*"
+      - "chmod -R 777*"
+      - "chown root*"
+      # Remote code execution
+      - "curl * | bash*"
+      - "curl * | sh*"
+      - "wget * | bash*"
+      - "wget * | sh*"
+      # Network backdoors
+      - "nc -l*"
+      - "ncat -l*"
+      # Secret exfiltration
+      - "*cat*id_rsa*"
+      - "*cat*.pem*"
+      - "echo $*_KEY*"
+      - "echo $*_SECRET*"
+      - "echo $*_TOKEN*"
+      - "printenv*KEY*"
+      - "printenv*SECRET*"
+
+  - name: block-insecure-protocols
+    effect: deny
+    principals: ["*"]
+    actions:
+      - http.request
+      - http.get
+      - http.post
+      - fetch
+      - browser.navigate
+    resources:
+      - "http://*"
+      - "ftp://*"
+      - "file://*"
+      - "data:text/html*"
+      - "javascript:*"
+
+  # === ALLOW RULES ===
+
+  - name: allow-workspace-read
+    effect: allow
+    principals: ["agent:*"]
+    actions:
+      - fs.read
+      - fs.read_file
+      - fs.list
+      - fs.readdir
+      - fs.stat
+      - fs.exists
+      - fs.glob
+      - file.read
+      - read
+      - glob
+      - grep
+    resources: ["*"]
+
+  - name: allow-workspace-write
+    effect: allow
+    principals: ["agent:*"]
+    actions:
+      - fs.write
+      - fs.write_file
+      - fs.create
+      - fs.mkdir
+      - file.write
+      - write
+      - edit
+    resources:
+      - "*/workspace/*"
+      - "*/projects/*"
+      - "*/src/*"
+      - "*/code/*"
+      - "*/.secureclaw/*"
+      - "*/Downloads/*"
+      - "*/Documents/*"
+      - "./*"
+      - "src/*"
+      - "lib/*"
+      - "test/*"
+      - "tests/*"
+      - "docs/*"
+    required_labels:
+      - intent_verified
+
+  - name: allow-workspace-delete
+    effect: allow
+    principals: ["agent:*"]
+    actions:
+      - fs.delete
+      - fs.remove
+      - fs.rmdir
+      - file.delete
+      - delete
+    resources:
+      - "*/workspace/*"
+      - "*/projects/*"
+      - "*/.secureclaw/*"
+      - "./*"
+    required_labels:
+      - intent_verified
+      - deletion_confirmed
+
+  - name: allow-safe-shell-commands
+    effect: allow
+    principals: ["agent:*"]
+    actions:
+      - shell.exec
+      - bash
+      - exec
+      - run
+    resources:
+      # File viewing
+      - "cat *"
+      - "head *"
+      - "tail *"
+      - "less *"
+      - "bat *"
+      # Directory listing
+      - "ls*"
+      - "tree *"
+      - "pwd"
+      - "cd *"
+      # Search
+      - "find *"
+      - "grep *"
+      - "rg *"
+      - "ag *"
+      # Text processing
+      - "wc *"
+      - "sort *"
+      - "uniq *"
+      - "cut *"
+      - "awk *"
+      - "sed *"
+      - "jq *"
+      # System info
+      - "whoami"
+      - "hostname"
+      - "uname *"
+      - "date"
+      - "env"
+      - "which *"
+      # Development tools
+      - "node *"
+      - "npm run*"
+      - "npm test*"
+      - "npm install*"
+      - "npx *"
+      - "pnpm *"
+      - "yarn *"
+      - "bun *"
+      - "python *"
+      - "python3 *"
+      - "pip install*"
+      - "cargo *"
+      - "go *"
+      - "make *"
+      - "git *"
+      # Container info (read-only)
+      - "docker ps*"
+      - "docker images*"
+      - "docker logs*"
+
+  - name: allow-build-commands
+    effect: allow
+    principals: ["agent:*"]
+    actions:
+      - shell.exec
+      - bash
+      - exec
+    resources:
+      - "npm run build*"
+      - "npm run test*"
+      - "pnpm build*"
+      - "pnpm test*"
+      - "yarn build*"
+      - "yarn test*"
+      - "make build*"
+      - "make test*"
+      - "cargo build*"
+      - "cargo test*"
+      - "go build*"
+      - "go test*"
+    required_labels:
+      - intent_verified
+
+  - name: allow-https-requests
+    effect: allow
+    principals: ["agent:*"]
+    actions:
+      - http.request
+      - http.get
+      - http.post
+      - http.put
+      - http.patch
+      - http.delete
+      - fetch
+    resources: ["https://*"]
+
+  - name: allow-browser-navigation
+    effect: allow
+    principals: ["agent:*"]
+    actions:
+      - browser.navigate
+      - browser.goto
+    resources: ["https://*"]
+    required_labels:
+      - browser_initialized
+
+  - name: allow-browser-interactions
+    effect: allow
+    principals: ["agent:*"]
+    actions:
+      - browser.snapshot
+      - browser.screenshot
+      - browser.click
+      - browser.type
+      - browser.fill
+      - browser.scroll
+      - browser.wait
+      - browser.read
+      - browser.extract
+    resources: ["*"]
+    required_labels:
+      - browser_initialized
+      - snapshot_captured
+
+  # === DEFAULT DENY ===
+
+  - name: default-deny
+    effect: deny
+    principals: ["*"]
+    actions: ["*"]
+    resources: ["*"]

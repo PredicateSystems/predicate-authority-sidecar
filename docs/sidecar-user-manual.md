@@ -17,7 +17,8 @@ A comprehensive guide to installing, configuring, and operating the Predicate Au
 9. [Terminal Dashboard](#terminal-dashboard)
 10. [Delegation Chains](#delegation-chains)
 11. [Security Features (Phase 5)](#security-features-phase-5)
-12. [Troubleshooting](#troubleshooting)
+12. [Secret Injection](#secret-injection)
+13. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -1109,6 +1110,234 @@ curl http://127.0.0.1:8787/health
 curl http://127.0.0.1:8787/status
 # Response: detailed status with version, mode, stats
 ```
+
+---
+
+## Secret Injection
+
+The sidecar supports policy-driven secret injection for `http.fetch` and `cli.exec` actions. Secrets are injected at execution time, ensuring agents never see raw credentials.
+
+### How It Works
+
+1. Store secrets as environment variables on the machine running the sidecar
+2. Reference them in policy rules using `${VAR_NAME}` syntax
+3. When an action matches a rule with injection config, the sidecar substitutes values at runtime
+4. The agent receives only the action result—never the secret values
+
+```
+┌─────────┐     authorize     ┌──────────────┐     execute      ┌─────────┐
+│  Agent  │ ─────────────────▶│   Sidecar    │ ────────────────▶│ Backend │
+│         │  (no secrets)     │ inject: $KEY │  (with secrets)  │   API   │
+└─────────┘                   └──────────────┘                  └─────────┘
+```
+
+### Environment Variable Syntax
+
+| Syntax | Description |
+|--------|-------------|
+| `${VAR_NAME}` | Substitute with value of VAR_NAME (error if not set) |
+| `${VAR_NAME:-default}` | Substitute with value or use default if not set |
+
+### Policy Configuration
+
+#### Injecting Headers for HTTP Requests
+
+Use `inject_headers` to add authentication headers to `http.fetch` actions:
+
+```yaml
+rules:
+  - name: api-with-auth
+    effect: allow
+    principals: ["agent:*"]
+    actions: ["http.fetch"]
+    resources: ["https://api.example.com/*"]
+    inject_headers:
+      Authorization: "Bearer ${API_TOKEN}"
+      X-Api-Key: "${API_KEY}"
+```
+
+JSON equivalent:
+
+```json
+{
+  "rules": [
+    {
+      "name": "api-with-auth",
+      "effect": "allow",
+      "principals": ["agent:*"],
+      "actions": ["http.fetch"],
+      "resources": ["https://api.example.com/*"],
+      "inject_headers": {
+        "Authorization": "Bearer ${API_TOKEN}",
+        "X-Api-Key": "${API_KEY}"
+      }
+    }
+  ]
+}
+```
+
+#### Injecting Environment Variables for CLI Commands
+
+Use `inject_env` to pass secrets to `cli.exec` actions:
+
+```yaml
+rules:
+  - name: deploy-with-credentials
+    effect: allow
+    principals: ["agent:deployer"]
+    actions: ["cli.exec"]
+    resources: ["deploy.sh", "kubectl"]
+    inject_env:
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
+      KUBECONFIG: "${KUBECONFIG:-/etc/kubernetes/admin.conf}"
+```
+
+### File-Based Secret Injection
+
+For large secrets like certificates, private keys, or multi-line content, use `inject_headers_from_file` and `inject_env_from_file` to read values from files instead of environment variables:
+
+```yaml
+rules:
+  # Inject certificate from file
+  - name: mtls-api
+    effect: allow
+    principals: ["agent:*"]
+    actions: ["http.fetch"]
+    resources: ["https://secure-api.example.com/*"]
+    inject_headers:
+      Authorization: "Bearer ${API_TOKEN}"
+    inject_headers_from_file:
+      X-Client-Cert: "/etc/certs/client.pem"
+
+  # Inject SSH key from file for CLI commands
+  - name: git-operations
+    effect: allow
+    principals: ["agent:deployer"]
+    actions: ["cli.exec"]
+    resources: ["git", "ssh"]
+    inject_env_from_file:
+      SSH_PRIVATE_KEY: "${HOME}/.ssh/deploy_key"
+```
+
+**Key behaviors:**
+- File paths support environment variable substitution (e.g., `${HOME}/.ssh/key`)
+- File contents are trimmed of trailing whitespace/newlines
+- File-based secrets take precedence over env-var-based secrets for the same key
+- Missing files cause execution to fail (fail-closed)
+
+### Complete Example
+
+**Policy file (`policy-with-secrets.yaml`):**
+
+```yaml
+rules:
+  # Allow API calls with injected auth header
+  - name: github-api
+    effect: allow
+    principals: ["agent:*"]
+    actions: ["http.fetch"]
+    resources: ["https://api.github.com/*"]
+    inject_headers:
+      Authorization: "Bearer ${GITHUB_TOKEN}"
+      Accept: "application/vnd.github.v3+json"
+
+  # Allow database CLI with credentials
+  - name: database-cli
+    effect: allow
+    principals: ["agent:dba"]
+    actions: ["cli.exec"]
+    resources: ["psql", "pg_dump"]
+    inject_env:
+      PGPASSWORD: "${DB_PASSWORD}"
+      PGHOST: "${DB_HOST:-localhost}"
+      PGUSER: "${DB_USER:-postgres}"
+
+  # Allow cloud CLI operations
+  - name: aws-cli
+    effect: allow
+    principals: ["agent:ops"]
+    actions: ["cli.exec"]
+    resources: ["aws"]
+    inject_env:
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
+      AWS_DEFAULT_REGION: "${AWS_REGION:-us-east-1}"
+
+  # mTLS with certificate from file
+  - name: secure-api
+    effect: allow
+    principals: ["agent:secure"]
+    actions: ["http.fetch"]
+    resources: ["https://internal-api.example.com/*"]
+    inject_headers_from_file:
+      X-Client-Certificate: "/etc/certs/client.pem"
+```
+
+**Starting the sidecar:**
+
+```bash
+# Set secrets as environment variables
+export GITHUB_TOKEN="ghp_xxxxxxxxxxxx"
+export DB_PASSWORD="secure-password"
+export AWS_ACCESS_KEY_ID="AKIAIOSFODNN7EXAMPLE"
+export AWS_SECRET_ACCESS_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+
+# Start sidecar
+./predicate-authorityd --policy-file policy-with-secrets.yaml run
+```
+
+**Agent making a request:**
+
+```python
+# Agent code - no secrets visible
+response = await authority_client.execute(
+    action="http.fetch",
+    resource="https://api.github.com/user/repos",
+    parameters={"method": "GET"}
+)
+# The sidecar injected the Authorization header automatically
+```
+
+### Security Benefits
+
+- **Zero-trust execution**: Agents never see or handle raw secrets
+- **Policy-driven**: Security team controls which secrets are injected where
+- **Audit trail**: All injections are logged with the action (values redacted)
+- **No agent changes**: Existing agents work without modification
+- **Defense in depth**: Even compromised agents cannot exfiltrate secrets
+
+### Best Practices
+
+1. **Use specific resource patterns**: Don't inject secrets into broad `*` patterns
+2. **Prefer defaults for non-sensitive values**: Use `${VAR:-default}` for regions, hosts, etc.
+3. **Rotate secrets regularly**: The sidecar reads env vars at substitution time
+4. **Monitor for missing vars**: The sidecar logs warnings when referenced vars are not set
+5. **Test policies in audit mode**: Verify injection works before enabling enforcement
+
+### Troubleshooting
+
+#### "Environment variable not set" errors
+
+The sidecar logs a warning when a referenced variable is not set:
+
+```
+WARN: Environment variable 'API_TOKEN' not set, using empty string
+```
+
+**Fix:** Ensure all referenced variables are exported before starting the sidecar.
+
+#### Headers not being injected
+
+**Cause:** Action or resource doesn't match the rule pattern.
+
+**Fix:** Run with `--log-level debug` to see which rules are evaluated and matched.
+
+#### Default values not working
+
+**Cause:** Syntax error in default value format.
+
+**Fix:** Ensure correct syntax: `${VAR:-default}` (note the `:-` separator).
 
 ---
 

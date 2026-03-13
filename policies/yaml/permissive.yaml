@@ -1,0 +1,99 @@
+# Permissive Policy
+# Minimal restrictions for trusted development environments
+# WARNING: Use only in trusted environments with fully trusted agents
+
+rules:
+  # === DENY RULES (only catastrophic commands) ===
+
+  - name: block-catastrophic-commands
+    effect: deny
+    principals: ["*"]
+    actions:
+      - shell.exec
+      - bash
+      - exec
+      - run
+    resources:
+      # System destruction
+      - "rm -rf /*"
+      - "rm -rf /"
+      - "rm -rf ~"
+      # Fork bomb
+      - ":(){ :|:& };:"
+      # Disk destruction
+      - "dd if=/dev/zero of=/dev/*"
+      - "mkfs.*"
+      - "> /dev/sd*"
+      - "> /dev/nvme*"
+
+  - name: block-sensitive-credentials
+    effect: deny
+    principals: ["*"]
+    actions:
+      - fs.read
+      - fs.write
+      - file.read
+      - file.write
+      - read
+      - write
+    resources:
+      # SSH private keys
+      - "*/.ssh/id_*"
+      # Cloud credentials
+      - "*/.aws/credentials"
+      - "*/.azure/credentials*"
+      - "*/.config/gcloud/credentials*"
+      # System shadow file
+      - "/etc/shadow"
+
+  # === ALLOW RULES (broad access) ===
+
+  - name: allow-all-filesystem
+    effect: allow
+    principals: ["agent:*"]
+    actions:
+      - fs.*
+      - file.*
+      - read
+      - write
+      - edit
+      - delete
+      - glob
+      - grep
+    resources: ["*"]
+
+  - name: allow-all-shell
+    effect: allow
+    principals: ["agent:*"]
+    actions:
+      - shell.exec
+      - bash
+      - exec
+      - run
+      - os.*
+      - process.*
+      - system.*
+    resources: ["*"]
+
+  - name: allow-all-http
+    effect: allow
+    principals: ["agent:*"]
+    actions:
+      - http.*
+      - fetch
+    resources: ["*"]
+
+  - name: allow-all-browser
+    effect: allow
+    principals: ["agent:*"]
+    actions:
+      - browser.*
+    resources: ["*"]
+
+  # === DEFAULT DENY ===
+
+  - name: default-deny
+    effect: deny
+    principals: ["*"]
+    actions: ["*"]
+    resources: ["*"]

@@ -14,5 +14,6 @@ pub mod policy;
 pub mod policy_loader;
 pub mod policy_signer;
 pub mod proof;
+pub mod secrets;
 pub mod ssrf;
 pub mod ui;
