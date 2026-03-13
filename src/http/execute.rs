@@ -15,6 +15,15 @@
 //!
 //! This ensures that an agent cannot request authorization for one resource
 //! but actually access a different resource.
+//!
+//! ## Secret Injection
+//!
+//! Policy rules can define `inject_headers` and `inject_env` to inject secrets
+//! at execution time. The sidecar reads environment variables from its own process
+//! and substitutes them into headers (for http.fetch) or environment variables
+//! (for cli.exec). Supported syntax:
+//! - `${VAR_NAME}` - Required variable, fails if not set
+//! - `${VAR_NAME:-default}` - Optional variable with default value
 
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use sha2::{Digest, Sha256};
@@ -22,13 +31,14 @@ use std::collections::HashMap;
 use std::path::Path;
 use tokio::fs;
 use tokio::process::Command;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::http::AppState;
 use crate::models::{
     AuthorizationReason, DirectoryEntry, ExecutePayload, ExecuteRequest, ExecuteResponse,
-    ExecuteResult,
+    ExecuteResult, PolicyRule, SidecarAuthorizeRequest,
 };
+use crate::secrets::substitute_env_vars_in_map;
 
 /// POST /v1/execute
 ///
@@ -136,37 +146,42 @@ pub async fn execute_handler(
         );
     }
 
-    // 5. Execute the operation
-    let (result, evidence_hash) = match execute_action(&request).await {
-        Ok((r, h)) => (r, h),
-        Err(e) => {
-            // Record failed execution in audit log
-            let audit_id = record_execution(
-                &state,
-                &request.mandate_id,
-                &request.action,
-                &request.resource,
-                false,
-                Some(&e),
-            );
+    // 5. Find matching policy rule for secret injection
+    //    We look up the rule that would have authorized this action/resource
+    let matched_rule = find_matching_rule(&state, &request);
 
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ExecuteResponse {
-                    success: false,
-                    result: None,
-                    error: Some(e),
-                    audit_id,
-                    evidence_hash: None,
-                }),
-            );
-        }
-    };
+    // 6. Execute the operation with secret injection
+    let (result, evidence_hash) =
+        match execute_action_with_injection(&request, matched_rule.as_ref()).await {
+            Ok((r, h)) => (r, h),
+            Err(e) => {
+                // Record failed execution in audit log
+                let audit_id = record_execution(
+                    &state,
+                    &request.mandate_id,
+                    &request.action,
+                    &request.resource,
+                    false,
+                    Some(&e),
+                );
 
-    // 6. Mark mandate as executed
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ExecuteResponse {
+                        success: false,
+                        result: None,
+                        error: Some(e),
+                        audit_id,
+                        evidence_hash: None,
+                    }),
+                );
+            }
+        };
+
+    // 7. Mark mandate as executed
     mandate_store.mark_executed(&request.mandate_id);
 
-    // 7. Record successful execution in audit log
+    // 8. Record successful execution in audit log
     let audit_id = record_execution(
         &state,
         &request.mandate_id,
@@ -191,6 +206,61 @@ pub async fn execute_handler(
             evidence_hash: Some(evidence_hash),
         }),
     )
+}
+
+/// Find the policy rule that matches the request for secret injection.
+///
+/// This looks up the first matching ALLOW rule to extract `inject_headers` or `inject_env`.
+fn find_matching_rule(state: &AppState, request: &ExecuteRequest) -> Option<PolicyRule> {
+    // Build a synthetic authorization request to find the matching rule
+    let auth_request = SidecarAuthorizeRequest {
+        principal: format!("execute:{}", request.mandate_id),
+        action: request.action.clone(),
+        resource: request.resource.clone(),
+        scopes: vec![],
+        intent_hash: None,
+        context: serde_json::Value::Null,
+        labels: vec![],
+    };
+
+    // Find the first matching ALLOW rule
+    let rules = state.policy_engine.get_rules();
+    for rule in rules {
+        if rule.effect == crate::models::PolicyEffect::Allow {
+            // Check if action and resource match this rule
+            let action_matches = rule
+                .actions
+                .iter()
+                .any(|a| glob_matches(a, &auth_request.action));
+            let resource_matches = rule
+                .resources
+                .iter()
+                .any(|r| glob_matches(r, &auth_request.resource));
+
+            if action_matches && resource_matches {
+                // Check if rule has injection config
+                if rule.inject_headers.is_some() || rule.inject_env.is_some() {
+                    debug!(
+                        "Found policy rule '{}' with secret injection for {}/{}",
+                        rule.name, request.action, request.resource
+                    );
+                    return Some(rule);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Simple glob pattern matching for rule lookup
+fn glob_matches(pattern: &str, value: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    if let Ok(p) = glob::Pattern::new(pattern) {
+        return p.matches(value);
+    }
+    pattern == value
 }
 
 /// Check if actions match (supports wildcard suffix)
@@ -236,8 +306,11 @@ fn normalize_path(path: &str) -> String {
         .to_string()
 }
 
-/// Execute the requested action
-async fn execute_action(request: &ExecuteRequest) -> Result<(ExecuteResult, String), String> {
+/// Execute the requested action with optional secret injection from policy rules
+async fn execute_action_with_injection(
+    request: &ExecuteRequest,
+    matched_rule: Option<&PolicyRule>,
+) -> Result<(ExecuteResult, String), String> {
     match request.action.as_str() {
         "fs.read" => execute_fs_read(&request.resource).await,
         "fs.write" => {
@@ -277,12 +350,15 @@ async fn execute_action(request: &ExecuteRequest) -> Result<(ExecuteResult, Stri
                 timeout_ms,
             } = payload
             {
+                // Get inject_env from matched rule
+                let inject_env = matched_rule.and_then(|r| r.inject_env.as_ref());
                 execute_cli(
                     &request.resource,
                     command,
                     args,
                     cwd.as_deref(),
                     *timeout_ms,
+                    inject_env,
                 )
                 .await
             } else {
@@ -291,7 +367,9 @@ async fn execute_action(request: &ExecuteRequest) -> Result<(ExecuteResult, Stri
         }
         "http.fetch" => {
             let payload = request.payload.as_ref();
-            execute_http_fetch(&request.resource, payload).await
+            // Get inject_headers from matched rule
+            let inject_headers = matched_rule.and_then(|r| r.inject_headers.as_ref());
+            execute_http_fetch(&request.resource, payload, inject_headers).await
         }
         "env.read" => {
             let payload = request
@@ -381,13 +459,17 @@ async fn execute_fs_write(
     ))
 }
 
-/// Execute cli.exec
+/// Execute cli.exec with optional environment variable injection
+///
+/// If `inject_env` is provided from a matching policy rule, environment variables
+/// are substituted from the sidecar's process environment and set for the command.
 async fn execute_cli(
     _resource: &str,
     command: &str,
     args: &[String],
     cwd: Option<&str>,
     timeout_ms: Option<u64>,
+    inject_env: Option<&HashMap<String, String>>,
 ) -> Result<(ExecuteResult, String), String> {
     let start = std::time::Instant::now();
 
@@ -396,6 +478,17 @@ async fn execute_cli(
 
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
+    }
+
+    // Inject environment variables from policy rule
+    if let Some(env_templates) = inject_env {
+        let resolved_env = substitute_env_vars_in_map(env_templates)
+            .map_err(|e| format!("Secret injection failed: {}", e))?;
+
+        for (key, value) in resolved_env {
+            debug!("Injecting env var: {} (value redacted)", key);
+            cmd.env(key, value);
+        }
     }
 
     // Execute with timeout
@@ -431,10 +524,15 @@ async fn execute_cli(
     ))
 }
 
-/// Execute http.fetch
+/// Execute http.fetch with optional header injection
+///
+/// If `inject_headers` is provided from a matching policy rule, headers are
+/// substituted from the sidecar's process environment and added to the request.
+/// Injected headers take precedence over payload headers with the same name.
 async fn execute_http_fetch(
     resource: &str,
     payload: Option<&ExecutePayload>,
+    inject_headers: Option<&HashMap<String, String>>,
 ) -> Result<(ExecuteResult, String), String> {
     let client = reqwest::Client::new();
 
@@ -454,7 +552,7 @@ async fn execute_http_fetch(
         _ => return Err(format!("Unsupported HTTP method: {}", method)),
     };
 
-    // Add headers and body from payload
+    // Add headers and body from payload first
     if let Some(ExecutePayload::HttpFetch { headers, body, .. }) = payload {
         if let Some(hdrs) = headers {
             for (k, v) in hdrs {
@@ -463,6 +561,17 @@ async fn execute_http_fetch(
         }
         if let Some(b) = body {
             request = request.body(b.clone());
+        }
+    }
+
+    // Inject headers from policy rule (these override payload headers)
+    if let Some(header_templates) = inject_headers {
+        let resolved_headers = substitute_env_vars_in_map(header_templates)
+            .map_err(|e| format!("Secret injection failed: {}", e))?;
+
+        for (key, value) in resolved_headers {
+            debug!("Injecting header: {} (value redacted)", key);
+            request = request.header(&key, &value);
         }
     }
 

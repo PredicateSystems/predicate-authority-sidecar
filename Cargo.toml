@@ -43,6 +43,7 @@ lru = "0.12"
 
 # Pattern matching (for policy rules)
 glob = "0.3"
+regex = "1"
 
 # CLI
 clap = { version = "4", features = ["derive", "env"] }

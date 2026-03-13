@@ -72,6 +72,8 @@ async fn test_authorize_allow_rule() {
         actions: vec!["browser.*".to_string()],
         resources: vec!["*".to_string()],
         max_delegation_depth: None,
+        inject_headers: None,
+        inject_env: None,
         required_labels: vec![],
     }];
 
@@ -115,6 +117,8 @@ async fn test_authorize_deny_rule() {
         actions: vec!["admin.*".to_string()],
         resources: vec!["*".to_string()],
         max_delegation_depth: None,
+        inject_headers: None,
+        inject_env: None,
         required_labels: vec![],
     }];
 
@@ -276,6 +280,8 @@ async fn test_legacy_authorize_endpoint() {
         actions: vec!["*".to_string()],
         resources: vec!["*".to_string()],
         max_delegation_depth: None,
+        inject_headers: None,
+        inject_env: None,
         required_labels: vec![],
     }];
 
@@ -311,6 +317,8 @@ async fn test_authorize_with_labels() {
         actions: vec!["sensitive.*".to_string()],
         resources: vec!["*".to_string()],
         max_delegation_depth: None,
+        inject_headers: None,
+        inject_env: None,
         required_labels: vec!["approved".to_string(), "verified".to_string()],
     }];
 
@@ -364,6 +372,8 @@ async fn test_local_mode_no_token_required() {
         actions: vec!["*".to_string()],
         resources: vec!["*".to_string()],
         max_delegation_depth: None,
+        inject_headers: None,
+        inject_env: None,
         required_labels: vec![],
     }];
 
@@ -401,6 +411,8 @@ async fn test_local_idp_mode_requires_token() {
         actions: vec!["*".to_string()],
         resources: vec!["*".to_string()],
         max_delegation_depth: None,
+        inject_headers: None,
+        inject_env: None,
         required_labels: vec![],
     }];
 
@@ -446,6 +458,8 @@ async fn test_local_idp_mode_invalid_token() {
         actions: vec!["*".to_string()],
         resources: vec!["*".to_string()],
         max_delegation_depth: None,
+        inject_headers: None,
+        inject_env: None,
         required_labels: vec![],
     }];
 
@@ -550,6 +564,8 @@ async fn test_execute_mandate_not_found() {
         actions: vec!["fs.*".to_string()],
         resources: vec!["*".to_string()],
         max_delegation_depth: None,
+        inject_headers: None,
+        inject_env: None,
         required_labels: vec![],
     }];
 
@@ -600,6 +616,8 @@ async fn test_execute_with_stored_mandate() {
         actions: vec!["fs.*".to_string()],
         resources: vec!["*".to_string()],
         max_delegation_depth: None,
+        inject_headers: None,
+        inject_env: None,
         required_labels: vec![],
     }];
 

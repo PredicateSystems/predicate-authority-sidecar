@@ -31,6 +31,7 @@ export PREDICATE_POLICY_FILE=policies/strict.json
 | **[permissive.json](permissive.json)** | Development | Full access | Full access | Full access | Full access |
 | **[audit-only.json](audit-only.json)** | Agent profiling | Logged | Logged | Logged | Logged |
 | **[minimal.json](minimal.json)** | Starting point | BLOCKED | BLOCKED | BLOCKED | HTTPS only |
+| **[secret-injection.json](secret-injection.json)** | API + CLI with secrets | Safe commands | With injected creds | API auth headers | BLOCKED |
 
 ---
 
@@ -166,6 +167,31 @@ export PREDICATE_POLICY_FILE=policies/strict.json
 
 **Best for:** Starting point for building custom policies.
 
+### secret-injection.json
+
+**Purpose:** Demonstrate policy-driven secret injection for API calls and CLI commands.
+
+**Features:**
+- Auto-inject auth headers for GitHub, OpenAI, Anthropic APIs
+- Auto-inject AWS/kubectl/database credentials for CLI commands
+- Secrets stay on the sidecar, agent never sees them
+
+**Example rules:**
+```json
+{
+  "name": "github-api-with-auth",
+  "effect": "allow",
+  "principals": ["agent:*"],
+  "actions": ["http.fetch"],
+  "resources": ["https://api.github.com/*"],
+  "inject_headers": {
+    "Authorization": "Bearer ${GITHUB_TOKEN}"
+  }
+}
+```
+
+**Best for:** Demonstrating zero-trust secret handling where agents cannot access raw credentials.
+
 ---
 
 ## Policy Schema
@@ -198,6 +224,52 @@ Each policy file contains a `rules` array. Rules are evaluated in order.
 | `resources` | Yes | string[] | ON WHAT resources |
 | `required_labels` | No | string[] | Verification labels required (default: `[]`) |
 | `max_delegation_depth` | No | number | Max delegation chain depth |
+| `inject_headers` | No | object | Headers to inject for `http.fetch` actions |
+| `inject_env` | No | object | Environment variables to inject for `cli.exec` actions |
+
+### Secret Injection
+
+Policy rules can specify headers or environment variables to inject when actions are executed through `/v1/execute`. Values support environment variable substitution:
+
+| Syntax | Description |
+|--------|-------------|
+| `${VAR_NAME}` | Substitute with environment variable value |
+| `${VAR_NAME:-default}` | Use default if variable not set |
+
+**Example: Inject auth header for API calls**
+
+```json
+{
+  "name": "api-with-auth",
+  "effect": "allow",
+  "principals": ["agent:*"],
+  "actions": ["http.fetch"],
+  "resources": ["https://api.example.com/*"],
+  "inject_headers": {
+    "Authorization": "Bearer ${API_TOKEN}",
+    "X-Api-Key": "${API_KEY}"
+  }
+}
+```
+
+**Example: Inject credentials for CLI**
+
+```json
+{
+  "name": "aws-cli",
+  "effect": "allow",
+  "principals": ["agent:ops"],
+  "actions": ["cli.exec"],
+  "resources": ["aws", "aws *"],
+  "inject_env": {
+    "AWS_ACCESS_KEY_ID": "${AWS_ACCESS_KEY_ID}",
+    "AWS_SECRET_ACCESS_KEY": "${AWS_SECRET_ACCESS_KEY}",
+    "AWS_DEFAULT_REGION": "${AWS_REGION:-us-east-1}"
+  }
+}
+```
+
+See the [sidecar user manual](../docs/sidecar-user-manual.md#secret-injection) for more details.
 
 ### Evaluation Order
 

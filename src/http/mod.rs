@@ -928,6 +928,8 @@ mod tests {
             resources: vec!["test://resource".to_string()],
             required_labels: vec![],
             max_delegation_depth: None,
+            inject_headers: None,
+            inject_env: None,
         }];
         let policy = PolicyEngine::with_rules(rules);
         // Disable SSRF protection for test URLs
@@ -1026,6 +1028,8 @@ mod tests {
             resources: vec!["test://resource".to_string()],
             required_labels: vec![],
             max_delegation_depth: None,
+            inject_headers: None,
+            inject_env: None,
         }];
         let policy = PolicyEngine::with_rules(rules);
         policy.set_ssrf_protection(None);
@@ -1102,6 +1106,8 @@ mod tests {
                 resources: vec!["https://amazon.com/*".to_string()],
                 required_labels: vec![],
                 max_delegation_depth: None,
+                inject_headers: None,
+                inject_env: None,
             },
             PolicyRule {
                 name: "allow-fs".to_string(),
@@ -1111,6 +1117,8 @@ mod tests {
                 resources: vec!["/workspace/**".to_string()],
                 required_labels: vec![],
                 max_delegation_depth: None,
+                inject_headers: None,
+                inject_env: None,
             },
         ];
         let policy = PolicyEngine::with_rules(rules);

@@ -91,6 +91,13 @@ impl PolicyEngine {
         self.rules.read().len()
     }
 
+    /// Get a copy of all rules (thread-safe)
+    ///
+    /// Used for looking up rules with inject_headers/inject_env for secret injection.
+    pub fn get_rules(&self) -> Vec<PolicyRule> {
+        self.rules.read().clone()
+    }
+
     /// Evaluate a request against the policy rules
     pub fn evaluate(&self, request: &SidecarAuthorizeRequest) -> PolicyMatchResult {
         self.evaluate_with_labels(request, &request.labels)
@@ -296,6 +303,8 @@ mod tests {
             resources: vec!["https://*".to_string()],
             required_labels: vec![],
             max_delegation_depth: None,
+            inject_headers: None,
+            inject_env: None,
         }
     }
 
@@ -308,6 +317,8 @@ mod tests {
             resources: vec!["*".to_string()],
             required_labels: vec![],
             max_delegation_depth: None,
+            inject_headers: None,
+            inject_env: None,
         }
     }
 
@@ -357,6 +368,8 @@ mod tests {
                 resources: vec!["*checkout*".to_string()],
                 required_labels: vec![],
                 max_delegation_depth: None,
+                inject_headers: None,
+                inject_env: None,
             },
             sample_allow_rule(),
         ]);
@@ -380,6 +393,8 @@ mod tests {
                 resources: vec!["*".to_string()],
                 required_labels: vec![],
                 max_delegation_depth: None,
+                inject_headers: None,
+                inject_env: None,
             },
         ]);
 
@@ -399,6 +414,8 @@ mod tests {
             resources: vec!["https://*".to_string()],
             required_labels: vec!["mfa_verified".to_string()],
             max_delegation_depth: None,
+            inject_headers: None,
+            inject_env: None,
         };
 
         let engine = PolicyEngine::with_rules(vec![rule]);
@@ -422,6 +439,8 @@ mod tests {
             resources: vec!["https://*".to_string()],
             required_labels: vec!["mfa_verified".to_string()],
             max_delegation_depth: None,
+            inject_headers: None,
+            inject_env: None,
         };
 
         let engine = PolicyEngine::with_rules(vec![rule]);
@@ -466,6 +485,8 @@ mod tests {
             resources: vec!["*".to_string()],
             required_labels: vec![],
             max_delegation_depth: None,
+            inject_headers: None,
+            inject_env: None,
         }]);
 
         let request = SidecarAuthorizeRequest {
@@ -494,6 +515,8 @@ mod tests {
             resources: vec!["*".to_string()],
             required_labels: vec![],
             max_delegation_depth: None,
+            inject_headers: None,
+            inject_env: None,
         }]);
 
         let request = SidecarAuthorizeRequest {
@@ -521,6 +544,8 @@ mod tests {
             resources: vec!["*".to_string()],
             required_labels: vec![],
             max_delegation_depth: None,
+            inject_headers: None,
+            inject_env: None,
         }]);
 
         let request = SidecarAuthorizeRequest {
@@ -547,6 +572,8 @@ mod tests {
             resources: vec!["*".to_string()],
             required_labels: vec![],
             max_delegation_depth: None,
+            inject_headers: None,
+            inject_env: None,
         }]);
 
         // Disable SSRF protection

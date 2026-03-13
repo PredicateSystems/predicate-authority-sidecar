@@ -225,6 +225,14 @@ pub struct PolicyRule {
     pub required_labels: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_delegation_depth: Option<u32>,
+    /// Headers to inject for http.fetch actions.
+    /// Values support environment variable substitution: `${VAR_NAME}` or `${VAR:-default}`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inject_headers: Option<std::collections::HashMap<String, String>>,
+    /// Environment variables to inject for cli.exec actions.
+    /// Values support environment variable substitution: `${VAR_NAME}` or `${VAR:-default}`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inject_env: Option<std::collections::HashMap<String, String>>,
 }
 
 /// Mandate claims (JWT payload)

@@ -1,0 +1,301 @@
+# Read-Only Policy
+# Allow context gathering without modification capabilities
+# Best for: Code review agents, documentation generators, codebase analysis
+
+rules:
+  # === DENY RULES (evaluated first) ===
+
+  - name: block-filesystem-write
+    effect: deny
+    principals: ["*"]
+    actions:
+      - fs.write
+      - fs.write_file
+      - fs.create
+      - fs.append
+      - file.write
+      - write
+      - edit
+    resources: ["*"]
+
+  - name: block-filesystem-delete
+    effect: deny
+    principals: ["*"]
+    actions:
+      - fs.delete
+      - fs.remove
+      - fs.unlink
+      - fs.rmdir
+      - fs.rm
+      - file.delete
+      - delete
+    resources: ["*"]
+
+  - name: block-filesystem-modify
+    effect: deny
+    principals: ["*"]
+    actions:
+      - fs.rename
+      - fs.move
+      - fs.copy
+      - fs.mkdir
+      - fs.chmod
+      - fs.chown
+      - fs.truncate
+      - file.rename
+      - file.move
+    resources: ["*"]
+
+  - name: block-sensitive-file-read
+    effect: deny
+    principals: ["*"]
+    actions:
+      - fs.read
+      - fs.read_file
+      - file.read
+      - read
+    resources:
+      # System files
+      - "/etc/passwd"
+      - "/etc/shadow"
+      - "/etc/sudoers"
+      - "/etc/ssh/*"
+      # SSH keys
+      - "*/.ssh/id_*"
+      - "*/.ssh/known_hosts"
+      - "*/.ssh/authorized_keys"
+      # Cloud credentials
+      - "*/.aws/credentials"
+      - "*/.aws/config"
+      - "*/.config/gcloud/*"
+      - "*/.azure/*"
+      - "*/.kube/config"
+      # Package manager auth
+      - "*/.npmrc"
+      - "*/.pypirc"
+      - "*/.netrc"
+      # Environment files
+      - "*/.env"
+      - "*/.env.*"
+      - "**/.env"
+      - "**/.env.*"
+      # Secrets and keys
+      - "**/credentials*"
+      - "**/secrets*"
+      - "**/*.pem"
+      - "**/*.key"
+      - "**/id_rsa*"
+      - "**/id_ed25519*"
+
+  - name: block-dangerous-shell-commands
+    effect: deny
+    principals: ["*"]
+    actions:
+      - shell.exec
+      - bash
+      - exec
+      - run
+    resources:
+      # File modification
+      - "rm *"
+      - "rm -rf *"
+      - "rmdir *"
+      - "unlink *"
+      - "shred *"
+      - "mv *"
+      - "cp *"
+      - "mkdir *"
+      - "touch *"
+      - "chmod *"
+      - "chown *"
+      - "chgrp *"
+      # Privilege escalation
+      - "sudo *"
+      - "su *"
+      - "doas *"
+      - "pkexec *"
+      # Package managers
+      - "apt *"
+      - "apt-get *"
+      - "yum *"
+      - "dnf *"
+      - "pacman *"
+      - "brew *"
+      - "npm *"
+      - "pip *"
+      - "pip3 *"
+      # Remote code execution
+      - "curl * | bash*"
+      - "curl * | sh*"
+      - "wget * | bash*"
+      - "wget * | sh*"
+      # Git mutations
+      - "git push*"
+      - "git commit*"
+      - "git reset*"
+      - "git checkout*"
+      - "git branch -d*"
+      - "git branch -D*"
+      # Editors (interactive)
+      - "vi *"
+      - "vim *"
+      - "nano *"
+      - "emacs *"
+      # In-place edits
+      - "sed -i*"
+      - "awk -i*"
+
+  - name: block-http-mutations
+    effect: deny
+    principals: ["*"]
+    actions:
+      - http.post
+      - http.put
+      - http.patch
+      - http.delete
+    resources: ["*"]
+
+  - name: block-browser-mutations
+    effect: deny
+    principals: ["*"]
+    actions:
+      - browser.click
+      - browser.type
+      - browser.fill
+      - browser.submit
+    resources: ["*"]
+
+  # === ALLOW RULES ===
+
+  - name: allow-filesystem-read
+    effect: allow
+    principals: ["agent:*"]
+    actions:
+      - fs.read
+      - fs.read_file
+      - fs.list
+      - fs.readdir
+      - fs.stat
+      - fs.exists
+      - fs.access
+      - file.read
+      - read
+    resources: ["*"]
+
+  - name: allow-filesystem-search
+    effect: allow
+    principals: ["agent:*"]
+    actions:
+      - fs.glob
+      - fs.find
+      - fs.search
+      - glob
+      - grep
+    resources: ["*"]
+
+  - name: allow-readonly-shell-commands
+    effect: allow
+    principals: ["agent:*"]
+    actions:
+      - shell.exec
+      - bash
+      - exec
+      - run
+    resources:
+      # File viewing
+      - "cat *"
+      - "head *"
+      - "tail *"
+      - "less *"
+      - "more *"
+      - "bat *"
+      # Directory listing
+      - "ls *"
+      - "ls"
+      - "ll *"
+      - "tree *"
+      - "exa *"
+      # File search
+      - "find *"
+      - "locate *"
+      - "which *"
+      - "whereis *"
+      - "type *"
+      # Content search
+      - "grep *"
+      - "rg *"
+      - "ag *"
+      - "ack *"
+      # Text processing (read-only)
+      - "wc *"
+      - "sort *"
+      - "uniq *"
+      - "cut *"
+      - "awk *"
+      - "sed *"
+      - "jq *"
+      - "yq *"
+      # System info
+      - "pwd"
+      - "whoami"
+      - "hostname"
+      - "uname *"
+      - "date"
+      - "uptime"
+      - "df *"
+      - "du *"
+      - "free *"
+      - "top -b*"
+      - "ps *"
+      - "env"
+      - "printenv*"
+      # Git (read-only operations)
+      - "git status*"
+      - "git log*"
+      - "git diff*"
+      - "git show*"
+      - "git branch*"
+      - "git remote*"
+      - "git rev-parse*"
+      - "git ls-files*"
+      - "git blame*"
+      # Code metrics
+      - "wc -l*"
+      - "cloc *"
+      - "tokei *"
+      - "file *"
+      - "stat *"
+
+  - name: allow-https-get-requests
+    effect: allow
+    principals: ["agent:*"]
+    actions:
+      - http.get
+      - http.request
+      - fetch
+      - browser.navigate
+      - browser.goto
+    resources: ["https://*"]
+
+  - name: allow-browser-read-operations
+    effect: allow
+    principals: ["agent:*"]
+    actions:
+      - browser.snapshot
+      - browser.screenshot
+      - browser.read
+      - browser.extract
+      - browser.get_text
+      - browser.get_html
+      - browser.get_state
+      - browser.scroll
+      - browser.wait
+    resources: ["*"]
+
+  # === DEFAULT DENY ===
+
+  - name: default-deny
+    effect: deny
+    principals: ["*"]
+    actions: ["*"]
+    resources: ["*"]
