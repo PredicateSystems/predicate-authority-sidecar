@@ -219,11 +219,19 @@ Configuration can be provided via (in order of precedence):
 
 | Option | Environment Variable | Default | Description |
 |--------|---------------------|---------|-------------|
-| `--disable-ssrf-protection` | `PREDICATE_DISABLE_SSRF` | `false` | Disable SSRF blocking |
+| `--ssrf-allow` | `PREDICATE_SSRF_ALLOW` | - | Comma-separated host:port pairs to whitelist |
+| `--ssrf-disabled` | `PREDICATE_SSRF_DISABLED` | `false` | Disable SSRF protection entirely |
 | `--require-signed-policy` | `PREDICATE_REQUIRE_SIGNED_POLICY` | `false` | Require Ed25519-signed policies |
 | `--policy-signing-key` | `PREDICATE_POLICY_SIGNING_KEY` | - | Ed25519 public key (hex) |
 | `--loop-guard-threshold` | `PREDICATE_LOOP_GUARD_THRESHOLD` | `5` | Failure count before blocking |
 | `--loop-guard-window-s` | `PREDICATE_LOOP_GUARD_WINDOW_S` | `60` | Time window for failures |
+
+### Policy Reload Options
+
+| Option | Environment Variable | Default | Description |
+|--------|---------------------|---------|-------------|
+| `--policy-reload-secret` | `PREDICATE_POLICY_RELOAD_SECRET` | - | Bearer token required for `/policy/reload` |
+| `--disable-policy-reload` | `PREDICATE_DISABLE_POLICY_RELOAD` | `false` | Disable `/policy/reload` endpoint entirely |
 
 ### Configuration File
 
@@ -245,6 +253,13 @@ shutdown_timeout_s = 30
 [policy]
 file = "/path/to/policy.json"
 hot_reload = false
+# reload_secret = "your-secret-here"  # Require bearer token for /policy/reload
+# disable_reload = false              # Set to true to disable /policy/reload entirely
+
+# SSRF Protection Configuration
+[ssrf]
+# allowed_endpoints = ["172.30.192.1:11434", "127.0.0.1:9200"]  # Bypass SSRF for these
+# disabled = false  # Set to true to disable all SSRF protection (not recommended)
 
 [identity]
 default_ttl_s = 900       # 15 minutes
@@ -632,6 +647,49 @@ Hot-reload policy rules from file.
 curl -X POST http://127.0.0.1:8787/policy/reload
 ```
 
+#### Securing the Policy Reload Endpoint
+
+By default, `/policy/reload` is unauthenticated. For production deployments, you should either:
+
+**Option 1: Require a bearer token**
+
+```bash
+# Start with reload secret
+./predicate-authorityd \
+  --policy-reload-secret "your-secret-token" \
+  --policy-file policy.json \
+  run
+
+# Reload requires Authorization header
+curl -X POST http://127.0.0.1:8787/policy/reload \
+  -H "Authorization: Bearer your-secret-token"
+```
+
+Or via environment variable:
+```bash
+export PREDICATE_POLICY_RELOAD_SECRET="your-secret-token"
+./predicate-authorityd --policy-file policy.json run
+```
+
+**Option 2: Disable the endpoint entirely**
+
+```bash
+./predicate-authorityd \
+  --disable-policy-reload \
+  --policy-file policy.json \
+  run
+```
+
+When disabled, the endpoint returns 404. Policy changes require a sidecar restart.
+
+Or via environment variable:
+```bash
+export PREDICATE_DISABLE_POLICY_RELOAD=true
+./predicate-authorityd --policy-file policy.json run
+```
+
+**Security note:** In shared-host or container environments, an unauthenticated reload endpoint allows any local process to replace the policy. Configure one of the above options to mitigate this risk.
+
 ### Identity Management
 
 **POST /identity/task** (local-idp mode)
@@ -960,9 +1018,50 @@ SSRF protection is **enabled by default**. Blocked requests return:
 }
 ```
 
-To disable (development only, not recommended for production):
+#### Whitelisting Local Services
+
+To allow specific local endpoints (e.g., local LLM instances, databases), use the `--ssrf-allow` flag with host:port pairs:
+
 ```bash
-./predicate-authorityd --disable-ssrf-protection --policy-file policy.json run
+# Allow local Ollama (WSL2) and Elasticsearch
+./predicate-authorityd \
+  --ssrf-allow 172.30.192.1:11434,127.0.0.1:9200 \
+  --policy-file policy.json \
+  run
+```
+
+Or via environment variable (comma-separated):
+```bash
+export PREDICATE_SSRF_ALLOW="172.30.192.1:11434,127.0.0.1:9200"
+./predicate-authorityd --policy-file policy.json run
+```
+
+Or in the configuration file:
+```toml
+[ssrf]
+allowed_endpoints = ["172.30.192.1:11434", "127.0.0.1:9200"]
+```
+
+**Important:** The whitelist is host:port specific to limit the exemption surface. Use exact matches only.
+
+#### Disabling SSRF Protection
+
+To disable entirely (development only, **not recommended** for production):
+
+```bash
+./predicate-authorityd --ssrf-disabled --policy-file policy.json run
+```
+
+Or via environment variable:
+```bash
+export PREDICATE_SSRF_DISABLED=true
+./predicate-authorityd --policy-file policy.json run
+```
+
+Or in the configuration file:
+```toml
+[ssrf]
+disabled = true
 ```
 
 ### Policy Signature Verification
