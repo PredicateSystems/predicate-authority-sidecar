@@ -289,6 +289,59 @@ Patterns use glob-style matching:
 | `https://*` | Any HTTPS URL |
 | `/home/*/projects/**` | Any file under any user's projects dir |
 
+#### Glob `**` Directory Matching Footgun
+
+**Common mistake:** Using `**` to match a directory itself.
+
+```json
+{
+  "resources": ["model-eval/**"]   // WRONG: matches files INSIDE model-eval, not the directory
+}
+```
+
+The pattern `model-eval/**` matches `model-eval/file.txt` and `model-eval/sub/file.txt`, but it does **NOT** match the directory `model-eval` itself.
+
+**To match both the directory and its contents:**
+
+```json
+{
+  "resources": ["model-eval", "model-eval/**"]   // CORRECT: matches directory AND contents
+}
+```
+
+Or use multiple patterns:
+- `model-eval` - matches the directory itself
+- `model-eval/*` - matches direct children
+- `model-eval/**` - matches all descendants recursively
+
+### SSRF Whitelist (Policy-Driven)
+
+You can include an optional `ssrf_whitelist` field in your policy file to allow specific local endpoints to bypass SSRF protection. This is useful for local LLMs (Ollama), databases, or other services running on private IPs.
+
+```json
+{
+  "ssrf_whitelist": ["172.30.192.1:11434", "127.0.0.1:9200"],
+  "rules": [...]
+}
+```
+
+**Key points:**
+- Whitelist uses exact `host:port` matching for security
+- If CLI `--ssrf-allow` is also provided, entries are merged
+- Defaults to empty (full SSRF enforcement) if omitted
+
+**YAML example:**
+```yaml
+ssrf_whitelist:
+  - "172.30.192.1:11434"  # Local Ollama on WSL2
+  - "127.0.0.1:9200"      # Local Elasticsearch
+
+rules:
+  - name: allow-llm-calls
+    effect: allow
+    # ...
+```
+
 ---
 
 ## Creating Custom Policies

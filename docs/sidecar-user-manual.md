@@ -1020,8 +1020,9 @@ SSRF protection is **enabled by default**. Blocked requests return:
 
 #### Whitelisting Local Services
 
-To allow specific local endpoints (e.g., local LLM instances, databases), use the `--ssrf-allow` flag with host:port pairs:
+To allow specific local endpoints (e.g., local LLM instances, databases), you have four options:
 
+**Option 1: CLI flag** (highest precedence)
 ```bash
 # Allow local Ollama (WSL2) and Elasticsearch
 ./predicate-authorityd \
@@ -1030,19 +1031,49 @@ To allow specific local endpoints (e.g., local LLM instances, databases), use th
   run
 ```
 
-Or via environment variable (comma-separated):
+**Option 2: Environment variable**
 ```bash
 export PREDICATE_SSRF_ALLOW="172.30.192.1:11434,127.0.0.1:9200"
 ./predicate-authorityd --policy-file policy.json run
 ```
 
-Or in the configuration file:
+**Option 3: TOML configuration file**
 ```toml
 [ssrf]
 allowed_endpoints = ["172.30.192.1:11434", "127.0.0.1:9200"]
 ```
 
-**Important:** The whitelist is host:port specific to limit the exemption surface. Use exact matches only.
+**Option 4: Policy file** (policy-driven, recommended for tenant-scoped deployments)
+
+Add an `ssrf_whitelist` field to your policy JSON/YAML file:
+
+```json
+{
+  "ssrf_whitelist": ["172.30.192.1:11434", "127.0.0.1:9200"],
+  "rules": [
+    ...
+  ]
+}
+```
+
+Or in YAML:
+```yaml
+ssrf_whitelist:
+  - "172.30.192.1:11434"  # Local Ollama on WSL2
+  - "127.0.0.1:9200"      # Local Elasticsearch
+
+rules:
+  - name: allow-llm-calls
+    effect: allow
+    ...
+```
+
+**Precedence and merging:**
+- CLI and environment variables take highest precedence
+- Entries from all sources are merged (deduplicated)
+- If no whitelist is configured anywhere, full SSRF enforcement applies
+
+**Important:** The whitelist uses exact `host:port` matching to limit the exemption surface. Only the specified port is allowed.
 
 #### Disabling SSRF Protection
 

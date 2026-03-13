@@ -78,6 +78,12 @@ impl SsrfProtection {
         self
     }
 
+    /// Alias for `with_allowed_endpoints` - adds whitelist entries that bypass SSRF checks
+    /// This is the method name used when loading from policy files
+    pub fn with_whitelist(self, whitelist: Vec<String>) -> Self {
+        self.with_allowed_endpoints(whitelist)
+    }
+
     /// Add a single allowed endpoint
     pub fn add_allowed_endpoint(&mut self, endpoint: &str) {
         self.allowed_endpoints.push(endpoint.to_lowercase());
@@ -592,5 +598,21 @@ mod tests {
         assert!(ssrf.block_localhost);
         assert!(ssrf.block_cloud_metadata);
         assert!(ssrf.block_internal_dns);
+    }
+
+    #[test]
+    fn test_with_whitelist_alias() {
+        // Test that with_whitelist() is an alias for with_allowed_endpoints()
+        let ssrf = SsrfProtection::new().with_whitelist(vec!["172.30.192.1:11434".to_string()]);
+
+        // Private IP would normally be blocked
+        assert!(SsrfProtection::new()
+            .check_resource("http://172.30.192.1:11434/api/generate")
+            .is_some());
+
+        // But with_whitelist should allow it
+        assert!(ssrf
+            .check_resource("http://172.30.192.1:11434/api/generate")
+            .is_none());
     }
 }

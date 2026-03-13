@@ -484,29 +484,16 @@ async fn main() -> anyhow::Result<()> {
     // Initialize policy engine
     let policy_engine = PolicyEngine::new();
 
-    // Configure SSRF protection
+    // Collect SSRF configuration from CLI and config file
     let ssrf_disabled = cli.ssrf_disabled || file_config.ssrf.disabled;
-    let ssrf_allowed_endpoints: Vec<String> = if !cli.ssrf_allow.is_empty() {
+    let mut ssrf_allowed_endpoints: Vec<String> = if !cli.ssrf_allow.is_empty() {
         cli.ssrf_allow.clone()
     } else {
         file_config.ssrf.allowed_endpoints.clone()
     };
 
-    if ssrf_disabled {
-        policy_engine.set_ssrf_protection(None);
-        warn!("SSRF protection disabled - all endpoints allowed");
-    } else if !ssrf_allowed_endpoints.is_empty() {
-        use predicate_authorityd::ssrf::SsrfProtection;
-        let ssrf = SsrfProtection::new().with_allowed_endpoints(ssrf_allowed_endpoints.clone());
-        policy_engine.set_ssrf_protection(Some(ssrf));
-        info!(
-            "SSRF protection enabled with {} allowed endpoints: {:?}",
-            ssrf_allowed_endpoints.len(),
-            ssrf_allowed_endpoints
-        );
-    }
-
     // Load policy file if specified (supports JSON and YAML formats)
+    // This must happen before SSRF setup to extract ssrf_whitelist from policy
     if let Some(ref policy_path) = policy_file {
         let format = policy_loader::detect_format(policy_path);
         info!(
@@ -526,6 +513,28 @@ async fn main() -> anyhow::Result<()> {
                     info!("Loaded {} policy rules", count);
                 }
 
+                // Merge ssrf_whitelist from policy file (if CLI/config didn't provide any)
+                if !result.ssrf_whitelist.is_empty() {
+                    if ssrf_allowed_endpoints.is_empty() {
+                        ssrf_allowed_endpoints = result.ssrf_whitelist;
+                        info!(
+                            "SSRF whitelist loaded from policy file: {:?}",
+                            ssrf_allowed_endpoints
+                        );
+                    } else {
+                        // CLI/config takes precedence, but we can merge
+                        for endpoint in result.ssrf_whitelist {
+                            if !ssrf_allowed_endpoints.contains(&endpoint) {
+                                ssrf_allowed_endpoints.push(endpoint);
+                            }
+                        }
+                        info!(
+                            "SSRF whitelist merged with policy file entries: {:?}",
+                            ssrf_allowed_endpoints
+                        );
+                    }
+                }
+
                 // Detect audit mode from policy file name
                 let path_lower = policy_path.to_lowercase();
                 if path_lower.contains("audit")
@@ -540,6 +549,21 @@ async fn main() -> anyhow::Result<()> {
                 warn!("Failed to load policy file: {}", e);
             }
         }
+    }
+
+    // Configure SSRF protection (after policy loading to include policy-based whitelist)
+    if ssrf_disabled {
+        policy_engine.set_ssrf_protection(None);
+        warn!("SSRF protection disabled - all endpoints allowed");
+    } else if !ssrf_allowed_endpoints.is_empty() {
+        use predicate_authorityd::ssrf::SsrfProtection;
+        let ssrf = SsrfProtection::new().with_whitelist(ssrf_allowed_endpoints.clone());
+        policy_engine.set_ssrf_protection(Some(ssrf));
+        info!(
+            "SSRF protection enabled with {} allowed endpoints: {:?}",
+            ssrf_allowed_endpoints.len(),
+            ssrf_allowed_endpoints
+        );
     }
 
     // Enable audit mode if explicitly requested via CLI
