@@ -2,6 +2,34 @@
 
 All notable changes to predicate-authorityd will be documented in this file.
 
+## [0.7.1] - 2026-03-12
+
+### Security Fixes
+
+#### Policy Reload Authentication (Issue #26)
+- **Bearer token authentication**: `/policy/reload` endpoint now supports `--policy-reload-secret` to require `Authorization: Bearer <token>`
+- **Disable endpoint option**: `--disable-policy-reload` returns 404, requiring sidecar restart for policy changes
+- **Configuration sources**: CLI flag, environment variable (`PREDICATE_POLICY_RELOAD_SECRET`), and TOML config file
+
+#### SSRF Whitelist for Local Services (Issue #27)
+- **Policy-driven whitelist**: Add `ssrf_whitelist` array to policy JSON/YAML to bypass SSRF protection for specific `host:port` endpoints
+- **Multiple configuration sources**: CLI (`--ssrf-allow`), env var (`PREDICATE_SSRF_ALLOW`), TOML config, and policy file
+- **Merging behavior**: Entries from all sources are combined; exact `host:port` matching limits exemption surface
+
+### Added
+
+#### Secret Injection (Policy-Driven)
+- **`inject_headers` rule field**: Auto-inject auth headers for HTTP requests (e.g., `Authorization: Bearer ${GITHUB_TOKEN}`)
+- **`inject_env` rule field**: Auto-inject environment variables for CLI commands (e.g., AWS credentials)
+- **Environment variable substitution**: Supports `${VAR}` and `${VAR:-default}` syntax
+- **Zero-trust pattern**: Secrets stay on sidecar; agents never see raw credentials
+- **New policy template**: `policies/secret-injection.json` demonstrates API and CLI credential injection
+
+### Documentation
+- Added "Glob `**` Directory Matching Footgun" section to policy README
+- Added SSRF whitelist configuration to user manual and UI docs
+- Added policy reload security options to CLI help and documentation
+
 ## [0.5.7] - 2026-03-05
 
 ### Added
