@@ -47,7 +47,7 @@ impl PolicyEngine {
         Self {
             rules: Arc::new(RwLock::new(Vec::new())),
             audit_mode: Arc::new(RwLock::new(false)),
-            ssrf_protection: Arc::new(RwLock::new(Some(SsrfProtection::default()))),
+            ssrf_protection: Arc::new(RwLock::new(Some(SsrfProtection::new()))),
         }
     }
 
@@ -56,7 +56,7 @@ impl PolicyEngine {
         Self {
             rules: Arc::new(RwLock::new(rules)),
             audit_mode: Arc::new(RwLock::new(false)),
-            ssrf_protection: Arc::new(RwLock::new(Some(SsrfProtection::default()))),
+            ssrf_protection: Arc::new(RwLock::new(Some(SsrfProtection::new()))),
         }
     }
 

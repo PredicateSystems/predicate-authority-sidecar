@@ -1461,3 +1461,188 @@ async fn test_secret_injection_from_file() {
     std::env::remove_var("TEST_ENV_SECRET_FILE");
     std::fs::remove_file(secret_file_path).ok();
 }
+
+// --- Issue #26: Policy Reload Authentication Tests ---
+
+#[tokio::test]
+async fn test_policy_reload_with_auth_secret() {
+    // Test that policy reload requires authentication when secret is configured
+    let engine = PolicyEngine::new();
+    let state = AppState::new(engine, "local_only")
+        .with_policy_reload_secret(Some("test-secret-123".to_string()));
+    let app = create_router(state);
+
+    // Without auth header - should fail
+    let body = json!({"rules": []});
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/policy/reload")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_policy_reload_with_valid_auth() {
+    let engine = PolicyEngine::new();
+    let state = AppState::new(engine, "local_only")
+        .with_policy_reload_secret(Some("test-secret-123".to_string()));
+    let app = create_router(state);
+
+    // With valid auth header - should succeed
+    let body = json!({"rules": []});
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/policy/reload")
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer test-secret-123")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_policy_reload_disabled() {
+    let engine = PolicyEngine::new();
+    let state = AppState::new(engine, "local_only").with_policy_reload_disabled(true);
+    let app = create_router(state);
+
+    // Endpoint should return 404 when disabled
+    let body = json!({"rules": []});
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/policy/reload")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+// --- Issue #27: SSRF Whitelist Tests ---
+
+#[tokio::test]
+async fn test_ssrf_whitelist_allows_private_ip() {
+    use predicate_authorityd::ssrf::SsrfProtection;
+
+    // Create engine with SSRF whitelist
+    let engine = PolicyEngine::new();
+    let rules = vec![PolicyRule {
+        name: "allow-all".to_string(),
+        effect: predicate_authorityd::models::PolicyEffect::Allow,
+        principals: vec!["*".to_string()],
+        actions: vec!["http.fetch".to_string()],
+        resources: vec!["*".to_string()],
+        max_delegation_depth: None,
+        inject_headers: None,
+        inject_headers_from_file: None,
+        inject_env: None,
+        inject_env_from_file: None,
+        required_labels: vec![],
+    }];
+    engine.replace_rules(rules);
+
+    // Configure SSRF whitelist for local Ollama-like service
+    let ssrf = SsrfProtection::new().with_allowed_endpoints(vec!["172.30.192.1:11434".to_string()]);
+    engine.set_ssrf_protection(Some(ssrf));
+
+    let state = AppState::new(engine, "local_only");
+    let app = create_router(state);
+
+    // Request to whitelisted private IP should be allowed
+    let body = json!({
+        "principal": "agent:test",
+        "action": "http.fetch",
+        "resource": "http://172.30.192.1:11434/api/generate"
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/authorize")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "Whitelisted private IP should be allowed"
+    );
+}
+
+#[tokio::test]
+async fn test_ssrf_blocks_non_whitelisted_private_ip() {
+    use predicate_authorityd::ssrf::SsrfProtection;
+
+    let engine = PolicyEngine::new();
+    let rules = vec![PolicyRule {
+        name: "allow-all".to_string(),
+        effect: predicate_authorityd::models::PolicyEffect::Allow,
+        principals: vec!["*".to_string()],
+        actions: vec!["http.fetch".to_string()],
+        resources: vec!["*".to_string()],
+        max_delegation_depth: None,
+        inject_headers: None,
+        inject_headers_from_file: None,
+        inject_env: None,
+        inject_env_from_file: None,
+        required_labels: vec![],
+    }];
+    engine.replace_rules(rules);
+
+    // Only whitelist one specific port
+    let ssrf = SsrfProtection::new().with_allowed_endpoints(vec!["172.30.192.1:11434".to_string()]);
+    engine.set_ssrf_protection(Some(ssrf));
+
+    let state = AppState::new(engine, "local_only");
+    let app = create_router(state);
+
+    // Request to different port should be blocked
+    let body = json!({
+        "principal": "agent:test",
+        "action": "http.fetch",
+        "resource": "http://172.30.192.1:8080/api"
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/authorize")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::FORBIDDEN,
+        "Non-whitelisted port should be blocked"
+    );
+}

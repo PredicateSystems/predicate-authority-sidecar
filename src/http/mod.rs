@@ -41,6 +41,10 @@ pub struct AppState {
     pub start_time: std::time::Instant,
     pub mode: String,
     pub identity_mode: String,
+    /// Secret required for /policy/reload endpoint (if set)
+    pub policy_reload_secret: Option<String>,
+    /// Whether /policy/reload endpoint is disabled
+    pub policy_reload_disabled: bool,
 }
 
 impl AppState {
@@ -55,7 +59,19 @@ impl AppState {
             start_time: std::time::Instant::now(),
             mode: mode.to_string(),
             identity_mode: "local".to_string(),
+            policy_reload_secret: None,
+            policy_reload_disabled: false,
         }
+    }
+
+    pub fn with_policy_reload_secret(mut self, secret: Option<String>) -> Self {
+        self.policy_reload_secret = secret;
+        self
+    }
+
+    pub fn with_policy_reload_disabled(mut self, disabled: bool) -> Self {
+        self.policy_reload_disabled = disabled;
+        self
     }
 
     pub fn with_identity_registry(mut self, registry: LocalIdentityRegistry) -> Self {
@@ -105,13 +121,16 @@ pub fn create_router(state: AppState) -> Router {
         router = router.route("/v1/execute", post(execute_handler));
     }
 
+    // Conditionally add policy reload endpoint (unless disabled)
+    if !state.policy_reload_disabled {
+        router = router.route("/policy/reload", post(policy_reload_handler));
+    }
+
     router
         // Operations
         .route("/health", get(health_handler))
         .route("/status", get(status_handler))
         .route("/metrics", get(metrics_handler))
-        // Policy management
-        .route("/policy/reload", post(policy_reload_handler))
         // Identity management
         .route("/identity/task", post(identity_task_handler))
         .route("/identity/revoke", post(identity_revoke_handler))
@@ -523,18 +542,54 @@ struct PolicyReloadResponse {
 
 async fn policy_reload_handler(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<PolicyReloadRequest>,
-) -> Json<PolicyReloadResponse> {
+) -> impl IntoResponse {
+    // Check authentication if a reload secret is configured
+    if let Some(ref expected_secret) = state.policy_reload_secret {
+        let provided_token = extract_bearer_token(&headers);
+        match provided_token {
+            Some(token) if token == *expected_secret => {
+                // Authentication successful
+            }
+            Some(_) => {
+                warn!("Policy reload rejected: invalid bearer token");
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(PolicyReloadResponse {
+                        success: false,
+                        rule_count: 0,
+                        message: "Invalid bearer token".to_string(),
+                    }),
+                );
+            }
+            None => {
+                warn!("Policy reload rejected: missing bearer token");
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(PolicyReloadResponse {
+                        success: false,
+                        rule_count: 0,
+                        message: "Authorization required: Bearer <token>".to_string(),
+                    }),
+                );
+            }
+        }
+    }
+
     let rule_count = request.rules.len();
 
     info!("Reloading policy with {} rules", rule_count);
     state.policy_engine.replace_rules(request.rules);
 
-    Json(PolicyReloadResponse {
-        success: true,
-        rule_count,
-        message: format!("Loaded {} rules", rule_count),
-    })
+    (
+        StatusCode::OK,
+        Json(PolicyReloadResponse {
+            success: true,
+            rule_count,
+            message: format!("Loaded {} rules", rule_count),
+        }),
+    )
 }
 
 // --- Identity Management ---
@@ -1298,5 +1353,145 @@ mod tests {
 
         assert!(response_json["allowed"].as_bool().unwrap());
         assert!(response_json["mandate_token"].is_string());
+    }
+
+    // --- Policy reload authentication tests (Issue #26) ---
+
+    fn test_state_with_policy_reload_secret() -> AppState {
+        AppState::new(PolicyEngine::new(), "test")
+            .with_policy_reload_secret(Some("test-reload-secret".to_string()))
+    }
+
+    fn test_state_with_policy_reload_disabled() -> AppState {
+        AppState::new(PolicyEngine::new(), "test").with_policy_reload_disabled(true)
+    }
+
+    #[tokio::test]
+    async fn test_policy_reload_requires_auth_when_secret_set() {
+        let app = create_router(test_state_with_policy_reload_secret());
+
+        // Without Authorization header - should fail
+        let body = r#"{"rules": []}"#;
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/policy/reload")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let response_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(!response_json["success"].as_bool().unwrap());
+        assert!(response_json["message"]
+            .as_str()
+            .unwrap()
+            .contains("Authorization required"));
+    }
+
+    #[tokio::test]
+    async fn test_policy_reload_rejects_invalid_token() {
+        let app = create_router(test_state_with_policy_reload_secret());
+
+        let body = r#"{"rules": []}"#;
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/policy/reload")
+                    .header("content-type", "application/json")
+                    .header("authorization", "Bearer wrong-secret")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let response_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(!response_json["success"].as_bool().unwrap());
+        assert!(response_json["message"]
+            .as_str()
+            .unwrap()
+            .contains("Invalid bearer token"));
+    }
+
+    #[tokio::test]
+    async fn test_policy_reload_succeeds_with_valid_token() {
+        let app = create_router(test_state_with_policy_reload_secret());
+
+        let body = r#"{"rules": []}"#;
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/policy/reload")
+                    .header("content-type", "application/json")
+                    .header("authorization", "Bearer test-reload-secret")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let response_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(response_json["success"].as_bool().unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_policy_reload_disabled_returns_404() {
+        let app = create_router(test_state_with_policy_reload_disabled());
+
+        let body = r#"{"rules": []}"#;
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/policy/reload")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // When route is not mounted, axum returns 404
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_policy_reload_no_auth_when_no_secret() {
+        // Without policy_reload_secret, should work without auth
+        let app = create_router(test_state());
+
+        let body = r#"{"rules": []}"#;
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/policy/reload")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let response_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(response_json["success"].as_bool().unwrap());
     }
 }
