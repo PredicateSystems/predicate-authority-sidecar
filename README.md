@@ -166,6 +166,12 @@ curl -X POST http://127.0.0.1:8787/v1/authorize \
 
 ---
 
+## Security
+
+For production enterprise deployments, Predicate supports Ed25519 cryptographic policy signing via the Control Plane to prevent local file tampering. [Read the Enterprise Hardening Guide here](https://www.predicatesystems.ai/docs/authority/sidecar/policy-signing).
+
+---
+
 ## Installation
 
 ### Download Binary
