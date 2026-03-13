@@ -1193,6 +1193,39 @@ rules:
       KUBECONFIG: "${KUBECONFIG:-/etc/kubernetes/admin.conf}"
 ```
 
+### File-Based Secret Injection
+
+For large secrets like certificates, private keys, or multi-line content, use `inject_headers_from_file` and `inject_env_from_file` to read values from files instead of environment variables:
+
+```yaml
+rules:
+  # Inject certificate from file
+  - name: mtls-api
+    effect: allow
+    principals: ["agent:*"]
+    actions: ["http.fetch"]
+    resources: ["https://secure-api.example.com/*"]
+    inject_headers:
+      Authorization: "Bearer ${API_TOKEN}"
+    inject_headers_from_file:
+      X-Client-Cert: "/etc/certs/client.pem"
+
+  # Inject SSH key from file for CLI commands
+  - name: git-operations
+    effect: allow
+    principals: ["agent:deployer"]
+    actions: ["cli.exec"]
+    resources: ["git", "ssh"]
+    inject_env_from_file:
+      SSH_PRIVATE_KEY: "${HOME}/.ssh/deploy_key"
+```
+
+**Key behaviors:**
+- File paths support environment variable substitution (e.g., `${HOME}/.ssh/key`)
+- File contents are trimmed of trailing whitespace/newlines
+- File-based secrets take precedence over env-var-based secrets for the same key
+- Missing files cause execution to fail (fail-closed)
+
 ### Complete Example
 
 **Policy file (`policy-with-secrets.yaml`):**
@@ -1230,6 +1263,15 @@ rules:
       AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
       AWS_DEFAULT_REGION: "${AWS_REGION:-us-east-1}"
+
+  # mTLS with certificate from file
+  - name: secure-api
+    effect: allow
+    principals: ["agent:secure"]
+    actions: ["http.fetch"]
+    resources: ["https://internal-api.example.com/*"]
+    inject_headers_from_file:
+      X-Client-Certificate: "/etc/certs/client.pem"
 ```
 
 **Starting the sidecar:**

@@ -481,6 +481,28 @@ async fn metrics_handler(State(state): State<AppState>) -> String {
         state.policy_engine.rule_count()
     ));
 
+    // Secret injection metrics
+    output.push_str(
+        "# HELP predicate_authority_secret_injections_total Total secret injection operations\n",
+    );
+    output.push_str("# TYPE predicate_authority_secret_injections_total counter\n");
+    output.push_str(&format!(
+        "predicate_authority_secret_injections_total{{type=\"headers_from_env\"}} {}\n",
+        stats.headers_injected
+    ));
+    output.push_str(&format!(
+        "predicate_authority_secret_injections_total{{type=\"headers_from_file\"}} {}\n",
+        stats.headers_injected_from_file
+    ));
+    output.push_str(&format!(
+        "predicate_authority_secret_injections_total{{type=\"env_vars_from_env\"}} {}\n",
+        stats.env_vars_injected
+    ));
+    output.push_str(&format!(
+        "predicate_authority_secret_injections_total{{type=\"env_vars_from_file\"}} {}\n",
+        stats.env_vars_injected_from_file
+    ));
+
     output
 }
 
@@ -929,7 +951,9 @@ mod tests {
             required_labels: vec![],
             max_delegation_depth: None,
             inject_headers: None,
+            inject_headers_from_file: None,
             inject_env: None,
+            inject_env_from_file: None,
         }];
         let policy = PolicyEngine::with_rules(rules);
         // Disable SSRF protection for test URLs
@@ -1029,7 +1053,9 @@ mod tests {
             required_labels: vec![],
             max_delegation_depth: None,
             inject_headers: None,
+            inject_headers_from_file: None,
             inject_env: None,
+            inject_env_from_file: None,
         }];
         let policy = PolicyEngine::with_rules(rules);
         policy.set_ssrf_protection(None);
@@ -1107,7 +1133,9 @@ mod tests {
                 required_labels: vec![],
                 max_delegation_depth: None,
                 inject_headers: None,
+                inject_headers_from_file: None,
                 inject_env: None,
+                inject_env_from_file: None,
             },
             PolicyRule {
                 name: "allow-fs".to_string(),
@@ -1118,7 +1146,9 @@ mod tests {
                 required_labels: vec![],
                 max_delegation_depth: None,
                 inject_headers: None,
+                inject_headers_from_file: None,
                 inject_env: None,
+                inject_env_from_file: None,
             },
         ];
         let policy = PolicyEngine::with_rules(rules);

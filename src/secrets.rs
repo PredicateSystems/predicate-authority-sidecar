@@ -144,6 +144,82 @@ pub fn validate_env_vars(template: &str) -> Vec<String> {
     missing
 }
 
+/// Read secret value from a file.
+///
+/// The file path can contain environment variable references which are substituted first.
+/// File contents are trimmed of trailing whitespace/newlines.
+///
+/// # Arguments
+///
+/// * `file_path_template` - Path to the file, may contain `${VAR}` patterns
+///
+/// # Returns
+///
+/// The file contents as a string, with trailing whitespace trimmed.
+pub fn read_secret_from_file(file_path_template: &str) -> SubstitutionResult<String> {
+    // First substitute any env vars in the path
+    let file_path = substitute_env_vars(file_path_template)?;
+
+    // Read the file
+    let contents = std::fs::read_to_string(&file_path).map_err(|e| {
+        SecretSubstitutionError::SubstitutionFailed(format!(
+            "Failed to read secret file '{}': {}",
+            file_path, e
+        ))
+    })?;
+
+    // Trim trailing whitespace (common with secret files)
+    Ok(contents.trim_end().to_string())
+}
+
+/// Read secrets from files and merge into a HashMap.
+///
+/// Used for processing `inject_headers_from_file` and `inject_env_from_file`.
+///
+/// # Arguments
+///
+/// * `file_templates` - HashMap where keys are header/env names and values are file paths
+///
+/// # Returns
+///
+/// A new HashMap with file contents as values.
+pub fn read_secrets_from_files(
+    file_templates: &HashMap<String, String>,
+) -> SubstitutionResult<HashMap<String, String>> {
+    let mut result = HashMap::with_capacity(file_templates.len());
+
+    for (key, file_path_template) in file_templates {
+        let value = read_secret_from_file(file_path_template)?;
+        result.insert(key.clone(), value);
+    }
+
+    Ok(result)
+}
+
+/// Merge two HashMaps, with the second taking precedence for duplicate keys.
+///
+/// Used to merge `inject_headers` with `inject_headers_from_file`.
+pub fn merge_maps(
+    base: Option<&HashMap<String, String>>,
+    override_map: Option<&HashMap<String, String>>,
+) -> HashMap<String, String> {
+    let mut result = HashMap::new();
+
+    if let Some(b) = base {
+        for (k, v) in b {
+            result.insert(k.clone(), v.clone());
+        }
+    }
+
+    if let Some(o) = override_map {
+        for (k, v) in o {
+            result.insert(k.clone(), v.clone());
+        }
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,5 +363,94 @@ mod tests {
 
         std::env::remove_var("MY_VAR_123");
         std::env::remove_var("_PRIVATE_VAR");
+    }
+
+    #[test]
+    fn test_read_secret_from_file() {
+        // Create a temp file with secret content
+        let temp_path = "/tmp/test_secret_file.txt";
+        std::fs::write(temp_path, "my-secret-value\n").unwrap();
+
+        let result = read_secret_from_file(temp_path).unwrap();
+        assert_eq!(result, "my-secret-value"); // Trailing newline trimmed
+
+        std::fs::remove_file(temp_path).ok();
+    }
+
+    #[test]
+    fn test_read_secret_from_file_with_env_var_path() {
+        let temp_path = "/tmp/test_secret_env_path.txt";
+        std::fs::write(temp_path, "secret-from-env-path").unwrap();
+        std::env::set_var("TEST_SECRET_PATH", temp_path);
+
+        let result = read_secret_from_file("${TEST_SECRET_PATH}").unwrap();
+        assert_eq!(result, "secret-from-env-path");
+
+        std::env::remove_var("TEST_SECRET_PATH");
+        std::fs::remove_file(temp_path).ok();
+    }
+
+    #[test]
+    fn test_read_secret_from_file_not_found() {
+        let result = read_secret_from_file("/nonexistent/path/to/secret");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Failed to read"));
+    }
+
+    #[test]
+    fn test_read_secrets_from_files() {
+        // Create temp files
+        std::fs::write("/tmp/test_header_1.txt", "header-value-1").unwrap();
+        std::fs::write("/tmp/test_header_2.txt", "header-value-2\n").unwrap();
+
+        let mut file_map = HashMap::new();
+        file_map.insert(
+            "X-Header-1".to_string(),
+            "/tmp/test_header_1.txt".to_string(),
+        );
+        file_map.insert(
+            "X-Header-2".to_string(),
+            "/tmp/test_header_2.txt".to_string(),
+        );
+
+        let result = read_secrets_from_files(&file_map).unwrap();
+
+        assert_eq!(result.get("X-Header-1").unwrap(), "header-value-1");
+        assert_eq!(result.get("X-Header-2").unwrap(), "header-value-2");
+
+        std::fs::remove_file("/tmp/test_header_1.txt").ok();
+        std::fs::remove_file("/tmp/test_header_2.txt").ok();
+    }
+
+    #[test]
+    fn test_merge_maps() {
+        let mut base = HashMap::new();
+        base.insert("key1".to_string(), "base1".to_string());
+        base.insert("key2".to_string(), "base2".to_string());
+
+        let mut override_map = HashMap::new();
+        override_map.insert("key2".to_string(), "override2".to_string());
+        override_map.insert("key3".to_string(), "override3".to_string());
+
+        let result = merge_maps(Some(&base), Some(&override_map));
+
+        assert_eq!(result.get("key1").unwrap(), "base1");
+        assert_eq!(result.get("key2").unwrap(), "override2"); // Overridden
+        assert_eq!(result.get("key3").unwrap(), "override3");
+    }
+
+    #[test]
+    fn test_merge_maps_with_none() {
+        let mut base = HashMap::new();
+        base.insert("key1".to_string(), "value1".to_string());
+
+        // Base only
+        let result = merge_maps(Some(&base), None);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result.get("key1").unwrap(), "value1");
+
+        // Neither
+        let result = merge_maps(None, None);
+        assert!(result.is_empty());
     }
 }

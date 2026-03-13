@@ -38,7 +38,8 @@ use crate::models::{
     AuthorizationReason, DirectoryEntry, ExecutePayload, ExecuteRequest, ExecuteResponse,
     ExecuteResult, PolicyRule, SidecarAuthorizeRequest,
 };
-use crate::secrets::substitute_env_vars_in_map;
+use crate::proof::InMemoryProofLedger;
+use crate::secrets::{merge_maps, read_secrets_from_files, substitute_env_vars_in_map};
 
 /// POST /v1/execute
 ///
@@ -152,7 +153,9 @@ pub async fn execute_handler(
 
     // 6. Execute the operation with secret injection
     let (result, evidence_hash) =
-        match execute_action_with_injection(&request, matched_rule.as_ref()).await {
+        match execute_action_with_injection(&request, matched_rule.as_ref(), &state.proof_ledger)
+            .await
+        {
             Ok((r, h)) => (r, h),
             Err(e) => {
                 // Record failed execution in audit log
@@ -238,8 +241,12 @@ fn find_matching_rule(state: &AppState, request: &ExecuteRequest) -> Option<Poli
                 .any(|r| glob_matches(r, &auth_request.resource));
 
             if action_matches && resource_matches {
-                // Check if rule has injection config
-                if rule.inject_headers.is_some() || rule.inject_env.is_some() {
+                // Check if rule has injection config (env vars or files)
+                if rule.inject_headers.is_some()
+                    || rule.inject_env.is_some()
+                    || rule.inject_headers_from_file.is_some()
+                    || rule.inject_env_from_file.is_some()
+                {
                     debug!(
                         "Found policy rule '{}' with secret injection for {}/{}",
                         rule.name, request.action, request.resource
@@ -310,6 +317,7 @@ fn normalize_path(path: &str) -> String {
 async fn execute_action_with_injection(
     request: &ExecuteRequest,
     matched_rule: Option<&PolicyRule>,
+    proof_ledger: &InMemoryProofLedger,
 ) -> Result<(ExecuteResult, String), String> {
     match request.action.as_str() {
         "fs.read" => execute_fs_read(&request.resource).await,
@@ -350,8 +358,18 @@ async fn execute_action_with_injection(
                 timeout_ms,
             } = payload
             {
-                // Get inject_env from matched rule
+                // Get inject_env and inject_env_from_file from matched rule
                 let inject_env = matched_rule.and_then(|r| r.inject_env.as_ref());
+                let inject_env_from_file =
+                    matched_rule.and_then(|r| r.inject_env_from_file.as_ref());
+
+                // Record injection metrics
+                let env_count = inject_env.map_or(0, |m| m.len());
+                let env_file_count = inject_env_from_file.map_or(0, |m| m.len());
+                if env_count > 0 || env_file_count > 0 {
+                    proof_ledger.record_injection(0, 0, env_count, env_file_count);
+                }
+
                 execute_cli(
                     &request.resource,
                     command,
@@ -359,6 +377,7 @@ async fn execute_action_with_injection(
                     cwd.as_deref(),
                     *timeout_ms,
                     inject_env,
+                    inject_env_from_file,
                 )
                 .await
             } else {
@@ -367,9 +386,25 @@ async fn execute_action_with_injection(
         }
         "http.fetch" => {
             let payload = request.payload.as_ref();
-            // Get inject_headers from matched rule
+            // Get inject_headers and inject_headers_from_file from matched rule
             let inject_headers = matched_rule.and_then(|r| r.inject_headers.as_ref());
-            execute_http_fetch(&request.resource, payload, inject_headers).await
+            let inject_headers_from_file =
+                matched_rule.and_then(|r| r.inject_headers_from_file.as_ref());
+
+            // Record injection metrics
+            let header_count = inject_headers.map_or(0, |m| m.len());
+            let header_file_count = inject_headers_from_file.map_or(0, |m| m.len());
+            if header_count > 0 || header_file_count > 0 {
+                proof_ledger.record_injection(header_count, header_file_count, 0, 0);
+            }
+
+            execute_http_fetch(
+                &request.resource,
+                payload,
+                inject_headers,
+                inject_headers_from_file,
+            )
+            .await
         }
         "env.read" => {
             let payload = request
@@ -463,6 +498,8 @@ async fn execute_fs_write(
 ///
 /// If `inject_env` is provided from a matching policy rule, environment variables
 /// are substituted from the sidecar's process environment and set for the command.
+/// If `inject_env_from_file` is provided, secrets are read from files and merged.
+/// File-based secrets take precedence over env-var-based secrets for same keys.
 async fn execute_cli(
     _resource: &str,
     command: &str,
@@ -470,6 +507,7 @@ async fn execute_cli(
     cwd: Option<&str>,
     timeout_ms: Option<u64>,
     inject_env: Option<&HashMap<String, String>>,
+    inject_env_from_file: Option<&HashMap<String, String>>,
 ) -> Result<(ExecuteResult, String), String> {
     let start = std::time::Instant::now();
 
@@ -480,15 +518,33 @@ async fn execute_cli(
         cmd.current_dir(dir);
     }
 
-    // Inject environment variables from policy rule
-    if let Some(env_templates) = inject_env {
-        let resolved_env = substitute_env_vars_in_map(env_templates)
-            .map_err(|e| format!("Secret injection failed: {}", e))?;
+    // Resolve env-var-based secrets
+    let resolved_env = if let Some(env_templates) = inject_env {
+        Some(
+            substitute_env_vars_in_map(env_templates)
+                .map_err(|e| format!("Secret injection failed: {}", e))?,
+        )
+    } else {
+        None
+    };
 
-        for (key, value) in resolved_env {
-            debug!("Injecting env var: {} (value redacted)", key);
-            cmd.env(key, value);
-        }
+    // Resolve file-based secrets
+    let file_env = if let Some(file_templates) = inject_env_from_file {
+        Some(
+            read_secrets_from_files(file_templates)
+                .map_err(|e| format!("File secret injection failed: {}", e))?,
+        )
+    } else {
+        None
+    };
+
+    // Merge env vars (file-based takes precedence)
+    let merged_env = merge_maps(resolved_env.as_ref(), file_env.as_ref());
+
+    // Inject merged environment variables
+    for (key, value) in merged_env {
+        debug!("Injecting env var: {} (value redacted)", key);
+        cmd.env(key, value);
     }
 
     // Execute with timeout
@@ -528,11 +584,14 @@ async fn execute_cli(
 ///
 /// If `inject_headers` is provided from a matching policy rule, headers are
 /// substituted from the sidecar's process environment and added to the request.
-/// Injected headers take precedence over payload headers with the same name.
+/// If `inject_headers_from_file` is provided, secrets are read from files and merged.
+/// File-based headers take precedence over env-var-based headers for same keys.
+/// All injected headers take precedence over payload headers with the same name.
 async fn execute_http_fetch(
     resource: &str,
     payload: Option<&ExecutePayload>,
     inject_headers: Option<&HashMap<String, String>>,
+    inject_headers_from_file: Option<&HashMap<String, String>>,
 ) -> Result<(ExecuteResult, String), String> {
     let client = reqwest::Client::new();
 
@@ -564,15 +623,33 @@ async fn execute_http_fetch(
         }
     }
 
-    // Inject headers from policy rule (these override payload headers)
-    if let Some(header_templates) = inject_headers {
-        let resolved_headers = substitute_env_vars_in_map(header_templates)
-            .map_err(|e| format!("Secret injection failed: {}", e))?;
+    // Resolve env-var-based headers
+    let resolved_headers = if let Some(header_templates) = inject_headers {
+        Some(
+            substitute_env_vars_in_map(header_templates)
+                .map_err(|e| format!("Secret injection failed: {}", e))?,
+        )
+    } else {
+        None
+    };
 
-        for (key, value) in resolved_headers {
-            debug!("Injecting header: {} (value redacted)", key);
-            request = request.header(&key, &value);
-        }
+    // Resolve file-based headers
+    let file_headers = if let Some(file_templates) = inject_headers_from_file {
+        Some(
+            read_secrets_from_files(file_templates)
+                .map_err(|e| format!("File secret injection failed: {}", e))?,
+        )
+    } else {
+        None
+    };
+
+    // Merge headers (file-based takes precedence over env-var-based)
+    let merged_headers = merge_maps(resolved_headers.as_ref(), file_headers.as_ref());
+
+    // Inject merged headers (these override payload headers)
+    for (key, value) in merged_headers {
+        debug!("Injecting header: {} (value redacted)", key);
+        request = request.header(&key, &value);
     }
 
     let response = request

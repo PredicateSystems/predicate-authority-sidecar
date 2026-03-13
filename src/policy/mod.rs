@@ -381,7 +381,9 @@ mod tests {
             required_labels: vec![],
             max_delegation_depth: None,
             inject_headers: None,
+            inject_headers_from_file: None,
             inject_env: None,
+            inject_env_from_file: None,
         }
     }
 
@@ -395,7 +397,9 @@ mod tests {
             required_labels: vec![],
             max_delegation_depth: None,
             inject_headers: None,
+            inject_headers_from_file: None,
             inject_env: None,
+            inject_env_from_file: None,
         }
     }
 
@@ -446,7 +450,9 @@ mod tests {
                 required_labels: vec![],
                 max_delegation_depth: None,
                 inject_headers: None,
+                inject_headers_from_file: None,
                 inject_env: None,
+                inject_env_from_file: None,
             },
             sample_allow_rule(),
         ]);
@@ -471,7 +477,9 @@ mod tests {
                 required_labels: vec![],
                 max_delegation_depth: None,
                 inject_headers: None,
+                inject_headers_from_file: None,
                 inject_env: None,
+                inject_env_from_file: None,
             },
         ]);
 
@@ -492,7 +500,9 @@ mod tests {
             required_labels: vec!["mfa_verified".to_string()],
             max_delegation_depth: None,
             inject_headers: None,
+            inject_headers_from_file: None,
             inject_env: None,
+            inject_env_from_file: None,
         };
 
         let engine = PolicyEngine::with_rules(vec![rule]);
@@ -517,7 +527,9 @@ mod tests {
             required_labels: vec!["mfa_verified".to_string()],
             max_delegation_depth: None,
             inject_headers: None,
+            inject_headers_from_file: None,
             inject_env: None,
+            inject_env_from_file: None,
         };
 
         let engine = PolicyEngine::with_rules(vec![rule]);
@@ -563,7 +575,9 @@ mod tests {
             required_labels: vec![],
             max_delegation_depth: None,
             inject_headers: None,
+            inject_headers_from_file: None,
             inject_env: None,
+            inject_env_from_file: None,
         }]);
 
         let request = SidecarAuthorizeRequest {
@@ -593,7 +607,9 @@ mod tests {
             required_labels: vec![],
             max_delegation_depth: None,
             inject_headers: None,
+            inject_headers_from_file: None,
             inject_env: None,
+            inject_env_from_file: None,
         }]);
 
         let request = SidecarAuthorizeRequest {
@@ -622,7 +638,9 @@ mod tests {
             required_labels: vec![],
             max_delegation_depth: None,
             inject_headers: None,
+            inject_headers_from_file: None,
             inject_env: None,
+            inject_env_from_file: None,
         }]);
 
         let request = SidecarAuthorizeRequest {
@@ -650,7 +668,9 @@ mod tests {
             required_labels: vec![],
             max_delegation_depth: None,
             inject_headers: None,
+            inject_headers_from_file: None,
             inject_env: None,
+            inject_env_from_file: None,
         }]);
 
         // Disable SSRF protection

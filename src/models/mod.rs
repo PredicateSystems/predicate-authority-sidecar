@@ -229,10 +229,19 @@ pub struct PolicyRule {
     /// Values support environment variable substitution: `${VAR_NAME}` or `${VAR:-default}`
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inject_headers: Option<std::collections::HashMap<String, String>>,
+    /// Headers to inject from files. Key is header name, value is file path.
+    /// File contents are read at execution time (useful for large secrets like certificates).
+    /// File paths support environment variable substitution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inject_headers_from_file: Option<std::collections::HashMap<String, String>>,
     /// Environment variables to inject for cli.exec actions.
     /// Values support environment variable substitution: `${VAR_NAME}` or `${VAR:-default}`
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inject_env: Option<std::collections::HashMap<String, String>>,
+    /// Environment variables to inject from files. Key is env var name, value is file path.
+    /// File contents are read at execution time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inject_env_from_file: Option<std::collections::HashMap<String, String>>,
 }
 
 /// Mandate claims (JWT payload)

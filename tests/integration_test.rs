@@ -73,7 +73,9 @@ async fn test_authorize_allow_rule() {
         resources: vec!["*".to_string()],
         max_delegation_depth: None,
         inject_headers: None,
+        inject_headers_from_file: None,
         inject_env: None,
+        inject_env_from_file: None,
         required_labels: vec![],
     }];
 
@@ -118,7 +120,9 @@ async fn test_authorize_deny_rule() {
         resources: vec!["*".to_string()],
         max_delegation_depth: None,
         inject_headers: None,
+        inject_headers_from_file: None,
         inject_env: None,
+        inject_env_from_file: None,
         required_labels: vec![],
     }];
 
@@ -281,7 +285,9 @@ async fn test_legacy_authorize_endpoint() {
         resources: vec!["*".to_string()],
         max_delegation_depth: None,
         inject_headers: None,
+        inject_headers_from_file: None,
         inject_env: None,
+        inject_env_from_file: None,
         required_labels: vec![],
     }];
 
@@ -318,7 +324,9 @@ async fn test_authorize_with_labels() {
         resources: vec!["*".to_string()],
         max_delegation_depth: None,
         inject_headers: None,
+        inject_headers_from_file: None,
         inject_env: None,
+        inject_env_from_file: None,
         required_labels: vec!["approved".to_string(), "verified".to_string()],
     }];
 
@@ -373,7 +381,9 @@ async fn test_local_mode_no_token_required() {
         resources: vec!["*".to_string()],
         max_delegation_depth: None,
         inject_headers: None,
+        inject_headers_from_file: None,
         inject_env: None,
+        inject_env_from_file: None,
         required_labels: vec![],
     }];
 
@@ -412,7 +422,9 @@ async fn test_local_idp_mode_requires_token() {
         resources: vec!["*".to_string()],
         max_delegation_depth: None,
         inject_headers: None,
+        inject_headers_from_file: None,
         inject_env: None,
+        inject_env_from_file: None,
         required_labels: vec![],
     }];
 
@@ -459,7 +471,9 @@ async fn test_local_idp_mode_invalid_token() {
         resources: vec!["*".to_string()],
         max_delegation_depth: None,
         inject_headers: None,
+        inject_headers_from_file: None,
         inject_env: None,
+        inject_env_from_file: None,
         required_labels: vec![],
     }];
 
@@ -565,7 +579,9 @@ async fn test_execute_mandate_not_found() {
         resources: vec!["*".to_string()],
         max_delegation_depth: None,
         inject_headers: None,
+        inject_headers_from_file: None,
         inject_env: None,
+        inject_env_from_file: None,
         required_labels: vec![],
     }];
 
@@ -617,7 +633,9 @@ async fn test_execute_with_stored_mandate() {
         resources: vec!["*".to_string()],
         max_delegation_depth: None,
         inject_headers: None,
+        inject_headers_from_file: None,
         inject_env: None,
+        inject_env_from_file: None,
         required_labels: vec![],
     }];
 
@@ -987,7 +1005,9 @@ async fn test_secret_injection_cli_exec() {
         resources: vec!["*".to_string()],
         max_delegation_depth: None,
         inject_headers: None,
+        inject_headers_from_file: None,
         inject_env: Some(inject_env),
+        inject_env_from_file: None,
         required_labels: vec![],
     }];
 
@@ -1131,7 +1151,9 @@ async fn test_secret_not_exposed_in_authorize_response() {
         resources: vec!["https://api.example.com/*".to_string()],
         max_delegation_depth: None,
         inject_headers: Some(inject_headers),
+        inject_headers_from_file: None,
         inject_env: None,
+        inject_env_from_file: None,
         required_labels: vec![],
     }];
 
@@ -1274,7 +1296,9 @@ async fn test_secret_validation_detects_missing_env_vars() {
         resources: vec!["*".to_string()],
         max_delegation_depth: None,
         inject_headers: Some(inject_headers),
+        inject_headers_from_file: None,
         inject_env: Some(inject_env),
+        inject_env_from_file: None,
         required_labels: vec![],
     }];
 
@@ -1305,4 +1329,135 @@ async fn test_secret_validation_detects_missing_env_vars() {
 
     // Cleanup
     std::env::remove_var("EXISTING_SECRET_VAR");
+}
+
+/// Test file-based secret injection for CLI exec
+#[tokio::test]
+async fn test_secret_injection_from_file() {
+    use predicate_authorityd::mandate::MandateStore;
+    use predicate_authorityd::models::{MandateClaims, SignedMandate};
+    use std::collections::HashMap;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    // Create temp files with secrets
+    let secret_file_path = "/tmp/test_secret_injection.txt";
+    std::fs::write(secret_file_path, "file_based_secret_value\n").unwrap();
+
+    // Create policy with inject_env_from_file
+    let mut inject_env_from_file = HashMap::new();
+    inject_env_from_file.insert("FILE_SECRET".to_string(), secret_file_path.to_string());
+
+    // Also test env var based injection alongside file-based
+    let mut inject_env = HashMap::new();
+    std::env::set_var("TEST_ENV_SECRET_FILE", "env_based_secret");
+    inject_env.insert(
+        "ENV_SECRET".to_string(),
+        "${TEST_ENV_SECRET_FILE}".to_string(),
+    );
+
+    let rules = vec![PolicyRule {
+        name: "cli-with-file-injection".to_string(),
+        effect: predicate_authorityd::models::PolicyEffect::Allow,
+        principals: vec!["*".to_string()],
+        actions: vec!["cli.exec".to_string()],
+        resources: vec!["*".to_string()],
+        max_delegation_depth: None,
+        inject_headers: None,
+        inject_headers_from_file: None,
+        inject_env: Some(inject_env),
+        inject_env_from_file: Some(inject_env_from_file),
+        required_labels: vec![],
+    }];
+
+    let engine = PolicyEngine::new();
+    engine.replace_rules(rules);
+    let mandate_store = MandateStore::new();
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    // Store a valid mandate
+    let mandate = SignedMandate {
+        token: "test-token".to_string(),
+        claims: MandateClaims {
+            mandate_id: "m_file_inject".to_string(),
+            principal_id: "agent:test".to_string(),
+            action: "cli.exec".to_string(),
+            resource: "sh".to_string(),
+            scopes: Vec::new(),
+            intent_hash: "hash123".to_string(),
+            state_hash: "state123".to_string(),
+            issued_at_epoch_s: now,
+            expires_at_epoch_s: now + 300,
+            delegated_by: None,
+            parent_mandate_id: None,
+            delegation_depth: 0,
+            delegation_chain_hash: Some("chain123".to_string()),
+            iss: Some("test".to_string()),
+            aud: Some("test".to_string()),
+            sub: Some("agent:test".to_string()),
+            iat: None,
+            exp: Some(now + 300),
+            nbf: None,
+            jti: Some("m_file_inject".to_string()),
+        },
+        signature: "test-signature".to_string(),
+    };
+    mandate_store.store(mandate);
+
+    let state = AppState::new(engine, "local_only").with_mandate_store(mandate_store);
+    let app = create_router(state);
+
+    // Execute command that echoes both env vars
+    let body = json!({
+        "mandate_id": "m_file_inject",
+        "action": "cli.exec",
+        "resource": "sh",
+        "payload": {
+            "type": "cli_exec",
+            "command": "sh",
+            "args": ["-c", "echo FILE_SECRET=$FILE_SECRET ENV_SECRET=$ENV_SECRET"]
+        }
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/execute")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let resp: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+
+    assert_eq!(resp["success"], true);
+
+    let stdout = resp["result"]["stdout"].as_str().unwrap();
+
+    // Verify both injection methods worked
+    assert!(
+        stdout.contains("file_based_secret_value"),
+        "Expected file_based_secret_value in stdout: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("env_based_secret"),
+        "Expected env_based_secret in stdout: {}",
+        stdout
+    );
+
+    // Cleanup
+    std::env::remove_var("TEST_ENV_SECRET_FILE");
+    std::fs::remove_file(secret_file_path).ok();
 }
