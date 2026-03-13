@@ -60,6 +60,9 @@ pub struct PolicyLoadResult {
     pub skipped_rules: usize,
     /// Whether the policy was cryptographically signed
     pub is_signed: bool,
+    /// SSRF whitelist from policy file (optional, host:port format)
+    /// Example: ["172.30.192.1:11434", "127.0.0.1:9200"]
+    pub ssrf_whitelist: Vec<String>,
 }
 
 /// Detect the format of a policy file based on its extension.
@@ -113,11 +116,23 @@ pub fn load_policy_from_string(
 
     let skipped_rules = total_rules - parsed_rules.len();
 
+    // Extract optional ssrf_whitelist array (host:port format)
+    let ssrf_whitelist: Vec<String> = json_value
+        .get("ssrf_whitelist")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
     Ok(PolicyLoadResult {
         rules: parsed_rules,
         format,
         skipped_rules,
         is_signed: false,
+        ssrf_whitelist,
     })
 }
 
@@ -425,5 +440,83 @@ mod tests {
 
         assert_eq!(result.rules.len(), 0);
         assert_eq!(result.skipped_rules, 0);
+        assert!(result.ssrf_whitelist.is_empty());
+    }
+
+    // --- SSRF whitelist tests (Issue #27 policy-driven approach) ---
+
+    #[test]
+    fn test_ssrf_whitelist_from_json() {
+        let policy_with_whitelist = r#"{
+            "ssrf_whitelist": ["172.30.192.1:11434", "127.0.0.1:9200"],
+            "rules": [
+                {
+                    "name": "allow-all",
+                    "effect": "allow",
+                    "principals": ["*"],
+                    "actions": ["*"],
+                    "resources": ["*"]
+                }
+            ]
+        }"#;
+
+        let result = load_policy_from_string(policy_with_whitelist, PolicyFormat::Json).unwrap();
+
+        assert_eq!(result.rules.len(), 1);
+        assert_eq!(result.ssrf_whitelist.len(), 2);
+        assert!(result
+            .ssrf_whitelist
+            .contains(&"172.30.192.1:11434".to_string()));
+        assert!(result
+            .ssrf_whitelist
+            .contains(&"127.0.0.1:9200".to_string()));
+    }
+
+    #[test]
+    fn test_ssrf_whitelist_from_yaml() {
+        let yaml_with_whitelist = r#"
+ssrf_whitelist:
+  - "172.30.192.1:11434"
+  - "localhost:8787"
+rules:
+  - name: allow-all
+    effect: allow
+    principals:
+      - "*"
+    actions:
+      - "*"
+    resources:
+      - "*"
+"#;
+
+        let result = load_policy_from_string(yaml_with_whitelist, PolicyFormat::Yaml).unwrap();
+
+        assert_eq!(result.rules.len(), 1);
+        assert_eq!(result.ssrf_whitelist.len(), 2);
+        assert!(result
+            .ssrf_whitelist
+            .contains(&"172.30.192.1:11434".to_string()));
+        assert!(result
+            .ssrf_whitelist
+            .contains(&"localhost:8787".to_string()));
+    }
+
+    #[test]
+    fn test_ssrf_whitelist_missing_defaults_to_empty() {
+        // Policy without ssrf_whitelist field should have empty whitelist
+        let result = load_policy_from_string(SAMPLE_JSON_POLICY, PolicyFormat::Json).unwrap();
+        assert!(result.ssrf_whitelist.is_empty());
+    }
+
+    #[test]
+    fn test_ssrf_whitelist_empty_array() {
+        let policy_with_empty_whitelist = r#"{
+            "ssrf_whitelist": [],
+            "rules": []
+        }"#;
+
+        let result =
+            load_policy_from_string(policy_with_empty_whitelist, PolicyFormat::Json).unwrap();
+        assert!(result.ssrf_whitelist.is_empty());
     }
 }
