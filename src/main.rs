@@ -8,6 +8,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::signal;
+use tokio::sync::watch;
 use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -226,6 +227,11 @@ struct Cli {
     /// Disable SSRF protection entirely (not recommended)
     #[arg(long, env = "PREDICATE_SSRF_DISABLED")]
     ssrf_disabled: bool,
+
+    // --- Web UI options ---
+    /// Enable embedded Web UI for browser-based monitoring
+    #[arg(long, env = "PREDICATE_WEB_UI", global = true)]
+    web_ui: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -578,10 +584,29 @@ async fn main() -> anyhow::Result<()> {
         .or(file_config.policy.reload_secret);
     let disable_policy_reload = cli.disable_policy_reload || file_config.policy.disable_reload;
 
+    // Generate Web UI token if enabled
+    let web_ui_token = if cli.web_ui {
+        use rand::Rng;
+        let token: String = rand::thread_rng()
+            .sample_iter(&rand::distributions::Alphanumeric)
+            .take(32)
+            .map(char::from)
+            .collect();
+        Some(token)
+    } else {
+        None
+    };
+
+    // Create shutdown signal channel for SSE streams
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
     // Create application state
     let mut state = AppState::new(policy_engine, &mode)
         .with_policy_reload_secret(policy_reload_secret.clone())
-        .with_policy_reload_disabled(disable_policy_reload);
+        .with_policy_reload_disabled(disable_policy_reload)
+        .with_web_ui_token(web_ui_token.clone())
+        .with_policy_file_path(policy_file.as_ref().map(PathBuf::from))
+        .with_shutdown_signal(shutdown_rx);
 
     if disable_policy_reload {
         info!("Policy reload endpoint disabled");
@@ -801,12 +826,22 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     info!("Listening on http://{}", addr);
 
+    // Print Web UI URL if enabled
+    if let Some(ref token) = web_ui_token {
+        // Use println! to ensure it's visible even with TUI
+        println!(
+            "\n  Web UI enabled: http://{}:{}/ui/?token={}\n",
+            host, port, token
+        );
+        info!("Web UI enabled at /ui/ (token-protected)");
+    }
+
     if is_dashboard_mode {
         // Dashboard mode: run HTTP server + TUI together
         info!("Starting dashboard mode (refresh: {}ms)", refresh_ms);
 
         // Run server in background task
-        let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
+        let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal(shutdown_tx));
 
         // Run both concurrently - TUI exit or server shutdown will end the session
         tokio::select! {
@@ -824,7 +859,7 @@ async fn main() -> anyhow::Result<()> {
     } else {
         // Normal mode: just run the HTTP server
         axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown_signal())
+            .with_graceful_shutdown(shutdown_signal(shutdown_tx))
             .await?;
     }
 
@@ -833,7 +868,8 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// Wait for shutdown signal (Ctrl+C or SIGTERM)
-async fn shutdown_signal() {
+/// Notifies SSE streams via the watch channel when shutdown is triggered.
+async fn shutdown_signal(shutdown_tx: watch::Sender<bool>) {
     let ctrl_c = async {
         signal::ctrl_c()
             .await
@@ -859,6 +895,9 @@ async fn shutdown_signal() {
             info!("Received SIGTERM, initiating graceful shutdown...");
         }
     }
+
+    // Signal SSE streams to terminate
+    let _ = shutdown_tx.send(true);
 }
 
 /// Background sync loop for control-plane updates
