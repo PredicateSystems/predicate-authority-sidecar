@@ -30,11 +30,7 @@ pub async fn static_handler(uri: Uri) -> impl IntoResponse {
         .trim_start_matches('/');
 
     // Handle root path
-    let path = if path.is_empty() {
-        "index.html"
-    } else {
-        path
-    };
+    let path = if path.is_empty() { "index.html" } else { path };
 
     tracing::debug!("Static file request: raw={}, resolved={}", raw_path, path);
     serve_file(path).await

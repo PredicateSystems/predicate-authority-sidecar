@@ -841,7 +841,8 @@ async fn main() -> anyhow::Result<()> {
         info!("Starting dashboard mode (refresh: {}ms)", refresh_ms);
 
         // Run server in background task
-        let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal(shutdown_tx));
+        let server =
+            axum::serve(listener, app).with_graceful_shutdown(shutdown_signal(shutdown_tx));
 
         // Run both concurrently - TUI exit or server shutdown will end the session
         tokio::select! {
