@@ -16,6 +16,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::watch;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{debug, info, warn};
 
@@ -45,6 +46,12 @@ pub struct AppState {
     pub policy_reload_secret: Option<String>,
     /// Whether /policy/reload endpoint is disabled
     pub policy_reload_disabled: bool,
+    /// Web UI authentication token (if web UI is enabled)
+    pub web_ui_token: Option<String>,
+    /// Policy file path (for Web UI to read raw policy)
+    pub policy_file_path: Option<std::path::PathBuf>,
+    /// Shutdown signal receiver for SSE streams
+    pub shutdown_rx: Option<watch::Receiver<bool>>,
 }
 
 impl AppState {
@@ -61,6 +68,9 @@ impl AppState {
             identity_mode: "local".to_string(),
             policy_reload_secret: None,
             policy_reload_disabled: false,
+            web_ui_token: None,
+            policy_file_path: None,
+            shutdown_rx: None,
         }
     }
 
@@ -94,6 +104,21 @@ impl AppState {
         self.mandate_store = Some(Arc::new(mandate_store));
         self
     }
+
+    pub fn with_web_ui_token(mut self, token: Option<String>) -> Self {
+        self.web_ui_token = token;
+        self
+    }
+
+    pub fn with_policy_file_path(mut self, path: Option<std::path::PathBuf>) -> Self {
+        self.policy_file_path = path;
+        self
+    }
+
+    pub fn with_shutdown_signal(mut self, rx: watch::Receiver<bool>) -> Self {
+        self.shutdown_rx = Some(rx);
+        self
+    }
 }
 
 /// Create the HTTP router with all endpoints
@@ -124,6 +149,12 @@ pub fn create_router(state: AppState) -> Router {
     // Conditionally add policy reload endpoint (unless disabled)
     if !state.policy_reload_disabled {
         router = router.route("/policy/reload", post(policy_reload_handler));
+    }
+
+    // Add Web UI routes if token is configured
+    if state.web_ui_token.is_some() {
+        let webui_router = crate::webui::create_webui_router(state.clone());
+        router = router.merge(webui_router);
     }
 
     router

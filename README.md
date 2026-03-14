@@ -70,6 +70,40 @@ Watch authorization decisions in real-time with the built-in TUI:
 
 ---
 
+## Web UI
+
+Browser-based monitoring dashboard with real-time authorization event streaming:
+
+![Web UI Screenshot](docs/images/web-ui.png)
+
+```bash
+./predicate-authorityd --policy-file policy.json --web-ui run
+```
+
+On startup, a secure URL is printed to the terminal:
+
+```
+  Web UI enabled: http://127.0.0.1:8787/ui/?token=a1b2c3d4e5f6...
+```
+
+**Features:**
+- **Split-pane layout:** Policy viewer on the left, live event feed on the right
+- **Real-time streaming:** Events appear instantly via Server-Sent Events (SSE)
+- **Color-coded results:** Green for ALLOW, red for DENY
+- **Event filtering:** Filter by principal, action, or result type
+- **Statistics:** Total allowed/denied counts and average latency
+- **Copy URL button:** Share the dashboard URL (includes auth token)
+- **Connection status:** Visual indicator when SSE connection is active
+
+**Security:**
+- Token-based authentication (32-character random token)
+- Token stored in `sessionStorage` (cleared on tab close)
+- URL cleaned after token extraction (no token in history)
+
+The `--web-ui` flag works with both `run` and `dashboard` commands. When used with `dashboard`, both the TUI and Web UI run simultaneously.
+
+---
+
 ## Quick Start
 
 **30 seconds to your first authorization decision.**

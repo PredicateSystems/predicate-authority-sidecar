@@ -17,3 +17,4 @@ pub mod proof;
 pub mod secrets;
 pub mod ssrf;
 pub mod ui;
+pub mod webui;
