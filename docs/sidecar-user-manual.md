@@ -19,6 +19,7 @@ A comprehensive guide to installing, configuring, and operating the Predicate Au
 11. [Security Features (Phase 5)](#security-features-phase-5)
 12. [Secret Injection](#secret-injection)
 13. [Troubleshooting](#troubleshooting)
+14. [Demos](#demos)
 
 ---
 
