@@ -4,17 +4,28 @@
 
 ---
 
+## Two Primitives: Identity vs Mandate
+
+| Primitive | What it proves | Lifetime | Analogy |
+|-----------|---------------|----------|---------|
+| **Identity** | Who the agent is | Session-scoped (minutes–hours) | Passport |
+| **Mandate** | What this exact action may do, under whose authority | Action-scoped (seconds–minutes) | Work visa |
+
+An IdP token (Okta, Entra) proves identity. A mandate proves per-action authorization.
+
+---
+
 ## The Problem: Authorization ≠ Intent
 
-When you connect an AI agent to an Identity Provider like Okta or Entra, it receives an access token—a **passport** that proves identity and carries static scopes like `database:write`.
+When you connect an AI agent to an Identity Provider, it receives an access token—a **passport** that proves identity and carries static scopes like `database:write`.
 
 But IdP scopes are coarse-grained. If a prompt injection tricks your agent into calling `drop_database` instead of `update_record`, your API executes the attack because the agent's token legitimately holds the `database:write` scope.
 
-**The IdP cannot evaluate context. It authorized the agent, not the action.**
+**The IdP authorized the agent, not the action.**
 
-## The Solution: Per-Action Work Visas
+## The Solution: Per-Action Mandates
 
-Predicate Authority adds a **deterministic policy layer** between your agent and your tools. Every action is evaluated in <1ms against explicit ALLOW/DENY rules before execution.
+Predicate Authority adds a **deterministic policy layer** between your agent and your tools. Every action is evaluated in <1ms against explicit ALLOW/DENY rules before execution. Approved actions receive a short-lived **mandate**—a cryptographic proof of authorization for that specific (action, resource, principal) tuple.
 
 ```
 ┌─────────────┐     ┌─────────────────────┐     ┌─────────────┐
@@ -29,9 +40,12 @@ Predicate Authority adds a **deterministic policy layer** between your agent and
 - **Fast**: p99 < 1ms authorization latency
 - **Auditable**: Cryptographic proof ledger for every decision
 
+The sidecar runs as a separate process, not as a framework hook. Framework integrations can disappear when orchestration changes; execution boundaries should survive runtime changes.
+
 ---
 
-## Terminal Dashboard
+<details>
+<summary><h2>Terminal Dashboard</h2></summary>
 
 Watch authorization decisions in real-time with the built-in TUI:
 
@@ -41,36 +55,12 @@ Watch authorization decisions in real-time with the built-in TUI:
 ./predicate-authorityd --policy-file policy.json dashboard
 ```
 
-```
-┌────────────────────────────────────────────────────────────────────────────┐
-│  PREDICATE AUTHORITY v0.5.1    MODE: strict  [LIVE]  UPTIME: 2h 34m  [?]  │
-│  Policy: loaded                Rules: 12 active      [Q:quit P:pause]     │
-├─────────────────────────────────────────┬──────────────────────────────────┤
-│  LIVE AUTHORITY GATE                    │  METRICS                         │
-│                                         │                                  │
-│  [ ✓ ALLOW ] agent:web                  │  Total Requests:    1,870        │
-│    browser.navigate → github.com        │  ├─ Allowed:        1,847 (98.8%)│
-│    m_7f3a2b1c | 0.4ms                   │  └─ Blocked:           23  (1.2%)│
-│                                         │                                  │
-│  [ ✗ DENY  ] agent:scraper              │  Throughput:        12.3 req/s   │
-│    fs.write → ~/.ssh/config             │  Avg Latency:       0.8ms        │
-│    EXPLICIT_DENY | 0.2ms                │                                  │
-│                                         │  TOKEN CONTEXT SAVED             │
-│  [ ✓ ALLOW ] agent:worker               │  Blocked early:     23 actions   │
-│    browser.click → button#checkout      │  Est. tokens saved: ~4,140       │
-│    m_9c2d4e5f | 0.6ms                   │                                  │
-├─────────────────────────────────────────┴──────────────────────────────────┤
-│  Generated 47 proofs this session. Run `predicate login` to sync to vault.│
-└────────────────────────────────────────────────────────────────────────────┘
-```
+**Keyboard:** `j/k` scroll, `f` filter, `c` clear, `P` pause, `?` help, `Q` quit | **Audit mode:** `--audit-mode` shows `[ ⚠ WOULD DENY ]` in yellow instead of blocking.
 
-**Keyboard:** `j/k` scroll, `f` filter (DENY/agent), `c` clear filter, `P` pause, `?` help, `Q` quit
+</details>
 
-**Audit mode:** Use `--audit-mode` or `audit-only.json` policy to show `[ ⚠ WOULD DENY ]` in yellow instead of blocking.
-
----
-
-## Web UI
+<details>
+<summary><h2>Web UI</h2></summary>
 
 Browser-based monitoring dashboard with real-time authorization event streaming:
 
@@ -101,6 +91,8 @@ On startup, a secure URL is printed to the terminal:
 - URL cleaned after token extraction (no token in history)
 
 The `--web-ui` flag works with both `run` and `dashboard` commands. When used with `dashboard`, both the TUI and Web UI run simultaneously.
+
+</details>
 
 ---
 
@@ -143,7 +135,8 @@ curl -X POST http://127.0.0.1:8787/v1/authorize \
 # {"allowed":false,"reason":"explicit_deny"}
 ```
 
-### Multi-Scope Authorization
+<details>
+<summary><h3>Multi-Scope Authorization</h3></summary>
 
 Request authorization for multiple action/resource pairs in a single call. This is useful for orchestrators that need broad permissions across different domains (e.g., browser access AND filesystem access):
 
@@ -176,6 +169,29 @@ curl -X POST http://127.0.0.1:8787/v1/authorize \
 - Reducing round-trips when multiple scopes are known upfront
 
 **Backward compatibility:** Single action/resource requests continue to work as before.
+
+</details>
+
+## Demos
+
+*See the sidecar in action—securing AI agents across popular frameworks.*
+
+### 1. Secure Your OpenClaw Agents
+* [Zero-Trust File Processor Agent Demo](https://github.com/PredicateSystems/predicate-claw/tree/main/examples/file-processor-demo)
+* [SecureClaw Integration Demo](https://github.com/PredicateSystems/predicate-claw/tree/main/examples/integration-demo)
+* [Amazon Kiro Reenactment Demo](https://github.com/PredicateSystems/predicate-claw/tree/main/examples/kiro-reenactment-demo)
+* [Zero-Trust AI Agent Demo](https://github.com/PredicateSystems/predicate-claw/tree/main/examples/real-openclaw-demo)
+
+### 2. CrewAI Multi-Agents
+* [Zero-Trust Multi-Agent E-commerce Price Monitoring](https://github.com/PredicateSystems/predicate-secure-crewai-demo)
+
+### 3. LangChain / LangGraph
+* [Poisoned Escalation Demo with Multiple Agents](https://github.com/PredicateSystems/langgraph-poisoned-escalation-demo)
+
+### 4. Temporal.io
+* [Protect your temporal.io agents with zero-trust runtime authorization.](https://github.com/PredicateSystems/temporal-predicate-py)
+
+**[More Demos...](https://predicatesystems.ai/demos)**
 
 ---
 
@@ -323,9 +339,11 @@ Integrate with your existing IdP for token validation:
 | `/metrics` | GET | Prometheus metrics |
 | `/policy/reload` | POST | Hot-reload policy |
 
-### Multi-Scope Delegation Chain
+### Delegation Semantics
 
-When a parent mandate has multiple scopes, child delegations are validated using **OR semantics**—the child's scope must be a subset of at least one parent scope:
+**Strict subset rule:** A child mandate's (action, resource) must be equal to or narrower than the parent's. `browser.*` can delegate to `browser.click`; `browser.click` cannot delegate to `browser.*`.
+
+**Multi-scope parents:** When a parent mandate has multiple scopes, child delegations are validated using **OR semantics**—the child's scope must be a subset of at least one parent scope:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -346,6 +364,21 @@ When a parent mandate has multiple scopes, child delegations are validated using
 │  ✓ Subset of scope 1  │           │  ✓ Subset of scope 2  │
 └───────────────────────┘           └───────────────────────┘
 ```
+
+### Cascade Revocation
+
+When a mandate is revoked, **all derived child mandates are immediately invalidated**:
+
+```
+A (root)
+└── B (depth 1)
+    └── C (depth 2)
+        └── D (depth 3)
+
+Revoke B → C and D die instantly. A survives.
+```
+
+Child authority does not survive parent revocation. To restore access, the child must obtain a fresh mandate from an active parent—there is no automatic re-minting.
 
 **Delegation request:**
 

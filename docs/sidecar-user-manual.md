@@ -1479,6 +1479,29 @@ WARN: Environment variable 'API_TOKEN' not set, using empty string
 
 ---
 
+## Demos
+
+*See the sidecar in action—securing AI agents across popular frameworks.*
+
+### 1. Secure Your OpenClaw Agents
+* [Zero-Trust File Processor Agent Demo](https://github.com/PredicateSystems/predicate-claw/tree/main/examples/file-processor-demo)
+* [SecureClaw Integration Demo](https://github.com/PredicateSystems/predicate-claw/tree/main/examples/integration-demo)
+* [Amazon Kiro Reenactment Demo](https://github.com/PredicateSystems/predicate-claw/tree/main/examples/kiro-reenactment-demo)
+* [Zero-Trust AI Agent Demo](https://github.com/PredicateSystems/predicate-claw/tree/main/examples/real-openclaw-demo)
+
+### 2. CrewAI Multi-Agents
+* [Zero-Trust Multi-Agent E-commerce Price Monitoring](https://github.com/PredicateSystems/predicate-secure-crewai-demo)
+
+### 3. LangChain / LangGraph
+* [Poisoned Escalation Demo with Multiple Agents](https://github.com/PredicateSystems/langgraph-poisoned-escalation-demo)
+
+### 4. Temporal.io
+* [Protect your temporal.io agents with zero-trust runtime authorization.](https://github.com/PredicateSystems/temporal-predicate-py)
+
+**[More Demos...](https://predicatesystems.ai/demos)**
+
+---
+
 ## Support
 
 - GitHub Issues: https://github.com/PredicateSystems/predicate-authority-sidecar/issues
