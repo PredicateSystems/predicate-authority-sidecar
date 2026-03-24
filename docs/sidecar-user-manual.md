@@ -15,11 +15,12 @@ A comprehensive guide to installing, configuring, and operating the Predicate Au
 7. [Policy Files](#policy-files)
 8. [API Reference](#api-reference)
 9. [Terminal Dashboard](#terminal-dashboard)
-10. [Delegation Chains](#delegation-chains)
-11. [Security Features (Phase 5)](#security-features-phase-5)
-12. [Secret Injection](#secret-injection)
-13. [Troubleshooting](#troubleshooting)
-14. [Demos](#demos)
+10. [Desktop companion (GUI)](#desktop-companion-gui)
+11. [Delegation Chains](#delegation-chains)
+12. [Security Features (Phase 5)](#security-features-phase-5)
+13. [Secret Injection](#secret-injection)
+14. [Troubleshooting](#troubleshooting)
+15. [Demos](#demos)
 
 ---
 
@@ -856,6 +857,62 @@ When you quit the dashboard, a session summary is printed:
 
 ────────────────────────────────────────────────────────
 ```
+
+---
+
+## Desktop companion (GUI)
+
+The repository includes an optional **desktop application** (`predicate-authority-desktop`) built with [egui](https://github.com/emilk/egui). It is a **local companion**: it can start and stop the sidecar process, tail stdout/stderr, poll `/health` and `/status`, edit and validate policy (same `policy_loader` as the daemon), reload policy over HTTP, and manage paths and launch flags. It does **not** replace the embedded **Web UI** for the per-request ALLOW/DENY event stream; use the browser dashboard when Web UI is enabled for that view.
+
+For a full feature list, see [`predicate-authority-desktop/README.md`](../predicate-authority-desktop/README.md).
+
+### Prerequisites
+
+- [Rust](https://rustup.rs/) (stable) and Cargo
+- Same clone as the sidecar: the desktop crate lives in the **workspace root** next to `predicate-authorityd` (see root `Cargo.toml` `members`).
+
+### Build
+
+From the `rust-predicate-authorityd` directory (workspace root):
+
+```bash
+cargo build -p predicate-authority-desktop --release
+```
+
+The binary is written to:
+
+- **Linux / macOS:** `target/release/predicate-authority-desktop`
+- **Windows:** `target\release\predicate-authority-desktop.exe`
+
+Debug build (faster compile):
+
+```bash
+cargo build -p predicate-authority-desktop
+```
+
+### Run
+
+From the same workspace root:
+
+```bash
+cargo run -p predicate-authority-desktop
+```
+
+Or run the release binary directly:
+
+```bash
+./target/release/predicate-authority-desktop
+```
+
+### First-time setup in the app
+
+1. Open the **Config** tab.
+2. Set **Sidecar binary** to your `predicate-authorityd` executable (e.g. `target/release/predicate-authorityd` after `cargo build --release` on the main package).
+3. Set **Policy file** to your JSON or YAML policy path.
+4. Optionally set **Config TOML**, **Host** / **Port**, **Web UI**, **Audit mode**, and **Policy reload secret** (must match `--policy-reload-secret` on the daemon if you use reload).
+5. Use **Home** → **Start sidecar**. When Web UI is enabled, use **Open dashboard in browser** after the log line shows the URL.
+
+If `predicate-authorityd` is in the **same directory** as the desktop binary, the app can offer **Use as binary** for quick setup.
 
 ---
 

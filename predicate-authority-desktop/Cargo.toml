@@ -1,0 +1,28 @@
+[package]
+name = "predicate-authority-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "Desktop companion for predicate-authorityd (launcher, policy editor, reload, diagnostics)"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "predicate-authority-desktop"
+path = "src/main.rs"
+
+[dependencies]
+predicate-authorityd = { path = ".." }
+
+eframe = { version = "0.29", default-features = true }
+egui = "0.29"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+regex = "1"
+rfd = "0.15"
+open = "5"
+serde_yaml = "0.9"
+keyring = "3"
+similar = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+dirs = "5"

@@ -247,6 +247,17 @@ cargo build --release
 ./target/release/predicate-authorityd version
 ```
 
+### Desktop companion
+
+Optional launcher and policy UI (egui):
+
+```bash
+cargo build -p predicate-authority-desktop --release
+./target/release/predicate-authority-desktop
+```
+
+See [`predicate-authority-desktop/README.md`](predicate-authority-desktop/README.md).
+
 ### Install via pip (Python SDK)
 
 ```bash
