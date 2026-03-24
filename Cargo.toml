@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "predicate-authority-desktop"]
+resolver = "2"
+
 [package]
 name = "predicate-authorityd"
 version = "0.7.2"
