@@ -398,7 +398,9 @@ impl DesktopApp {
         }
     }
 
-    fn current_rules_for_apply(&mut self) -> Result<Vec<predicate_authorityd::models::PolicyRule>, String> {
+    fn current_rules_for_apply(
+        &mut self,
+    ) -> Result<Vec<predicate_authorityd::models::PolicyRule>, String> {
         match self.policy_edit_mode {
             PolicyEditMode::Builder => policy_ui::drafts_to_rules(&self.rule_drafts),
             PolicyEditMode::Raw => {
@@ -423,12 +425,7 @@ impl eframe::App for DesktopApp {
             .inner_margin(Margin::symmetric(14.0, 10.0))
             .stroke(Stroke::new(
                 1.0,
-                ctx.style()
-                    .visuals
-                    .widgets
-                    .noninteractive
-                    .bg_stroke
-                    .color,
+                ctx.style().visuals.widgets.noninteractive.bg_stroke.color,
             ));
         egui::TopBottomPanel::top("top_tabs")
             .frame(tab_frame)
@@ -446,24 +443,24 @@ impl eframe::App for DesktopApp {
         let central = Frame::none()
             .fill(ctx.style().visuals.window_fill)
             .inner_margin(Margin::symmetric(18.0, 16.0));
-        egui::CentralPanel::default().frame(central).show(ctx, |ui| {
-            // Logs keeps its own inner ScrollArea sized to the viewport; avoid nested outer scroll.
-            if self.main_tab == MainTab::Logs {
-                self.ui_logs(ui);
-                return;
-            }
-            ScrollArea::vertical()
-                .id_salt(("central_tab", self.main_tab))
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    match self.main_tab {
+        egui::CentralPanel::default()
+            .frame(central)
+            .show(ctx, |ui| {
+                // Logs keeps its own inner ScrollArea sized to the viewport; avoid nested outer scroll.
+                if self.main_tab == MainTab::Logs {
+                    self.ui_logs(ui);
+                    return;
+                }
+                ScrollArea::vertical()
+                    .id_salt(("central_tab", self.main_tab))
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| match self.main_tab {
                         MainTab::Home => self.ui_home(ui),
                         MainTab::Config => self.ui_config(ui),
                         MainTab::Policy => self.ui_policy(ui),
                         MainTab::Logs => {}
-                    }
-                });
-        });
+                    });
+            });
     }
 }
 
@@ -479,10 +476,11 @@ impl DesktopApp {
         let running = self.supervisor.is_running();
         section_card(ui, "Sidecar", |ui| {
             ui.horizontal(|ui| {
-                let start = egui::Button::new(RichText::new("Start").strong().color(Color32::WHITE))
-                    .fill(theme::ACCENT)
-                    .rounding(Rounding::same(6.0))
-                    .min_size(egui::vec2(100.0, 32.0));
+                let start =
+                    egui::Button::new(RichText::new("Start").strong().color(Color32::WHITE))
+                        .fill(theme::ACCENT)
+                        .rounding(Rounding::same(6.0))
+                        .min_size(egui::vec2(100.0, 32.0));
                 if ui.add_enabled(!running, start).clicked() {
                     self.start_sidecar();
                 }
@@ -513,13 +511,9 @@ impl DesktopApp {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("State:").color(theme::MUTED));
                 ui.label(
-                    RichText::new(if running {
-                        "Running"
-                    } else {
-                        "Stopped"
-                    })
-                    .strong()
-                    .color(if running { theme::OK } else { theme::MUTED }),
+                    RichText::new(if running { "Running" } else { "Stopped" })
+                        .strong()
+                        .color(if running { theme::OK } else { theme::MUTED }),
                 );
             });
             if !self.status_message.is_empty() {
@@ -531,12 +525,8 @@ impl DesktopApp {
         ui.add_space(12.0);
         section_card(ui, "Endpoints & policy", |ui| {
             ui.label(
-                RichText::new(format!(
-                    "Listen  {}:{}",
-                    self.host.trim(),
-                    self.port.trim(),
-                ))
-                .monospace(),
+                RichText::new(format!("Listen  {}:{}", self.host.trim(), self.port.trim(),))
+                    .monospace(),
             );
             ui.label(
                 RichText::new(format!(
@@ -548,18 +538,14 @@ impl DesktopApp {
             );
             let pol = self.policy_path.trim();
             ui.label(if pol.is_empty() {
-                RichText::new("Policy file: not set (configure in Config)")
-                    .color(theme::MUTED)
+                RichText::new("Policy file: not set (configure in Config)").color(theme::MUTED)
             } else {
                 RichText::new(format!("Policy file: {pol}")).monospace()
             });
             match self.last_sidecar_start {
                 Some(t) => ui.label(
-                    RichText::new(format!(
-                        "Last start: {:.0}s ago",
-                        t.elapsed().as_secs_f32()
-                    ))
-                    .color(theme::MUTED),
+                    RichText::new(format!("Last start: {:.0}s ago", t.elapsed().as_secs_f32()))
+                        .color(theme::MUTED),
                 ),
                 None => ui.label(RichText::new("Last start: —").color(theme::MUTED)),
             }
@@ -570,21 +556,18 @@ impl DesktopApp {
             mono_block(ui, &self.health_line);
             mono_block(ui, &self.status_line);
             ui.add_space(6.0);
-            ui.collapsing(
-                RichText::new("Recent samples").color(theme::MUTED),
-                |ui| {
-                    if self.status_history.is_empty() {
-                        ui.label(RichText::new("No samples yet.").color(theme::MUTED));
-                    } else {
-                        let h = (ui.available_height() * 0.85).clamp(72.0, 200.0);
-                        ScrollArea::vertical().max_height(h).show(ui, |ui| {
-                            for line in &self.status_history {
-                                ui.label(RichText::new(line).monospace().small());
-                            }
-                        });
-                    }
-                },
-            );
+            ui.collapsing(RichText::new("Recent samples").color(theme::MUTED), |ui| {
+                if self.status_history.is_empty() {
+                    ui.label(RichText::new("No samples yet.").color(theme::MUTED));
+                } else {
+                    let h = (ui.available_height() * 0.85).clamp(72.0, 200.0);
+                    ScrollArea::vertical().max_height(h).show(ui, |ui| {
+                        for line in &self.status_history {
+                            ui.label(RichText::new(line).monospace().small());
+                        }
+                    });
+                }
+            });
         });
 
         ui.add_space(12.0);
@@ -612,7 +595,12 @@ impl DesktopApp {
         ui.add_space(10.0);
 
         section_card(ui, "Paths", |ui| {
-            path_row(ui, "Sidecar binary", &mut self.binary_path, FilePick::Executable);
+            path_row(
+                ui,
+                "Sidecar binary",
+                &mut self.binary_path,
+                FilePick::Executable,
+            );
             if let Some(p) = sidecar_probe::sibling_sidecar_binary() {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Alongside app").color(theme::MUTED));
@@ -647,27 +635,26 @@ impl DesktopApp {
                                 );
                             }
                             Err(e) => {
-                                self.config_generate_note =
-                                    format!("Could not write file: {e}");
+                                self.config_generate_note = format!("Could not write file: {e}");
                             }
                         }
                     }
                 }
                 ui.label(
-                    RichText::new("Uses the daemon’s built-in example; edit paths and secrets after saving.")
-                        .small()
-                        .color(theme::MUTED),
+                    RichText::new(
+                        "Uses the daemon’s built-in example; edit paths and secrets after saving.",
+                    )
+                    .small()
+                    .color(theme::MUTED),
                 );
             });
             if !self.config_generate_note.is_empty() {
                 let ok = !self.config_generate_note.starts_with("Could not");
-                ui.label(
-                    RichText::new(&self.config_generate_note).color(if ok {
-                        theme::OK
-                    } else {
-                        ui.visuals().error_fg_color
-                    }),
-                );
+                ui.label(RichText::new(&self.config_generate_note).color(if ok {
+                    theme::OK
+                } else {
+                    ui.visuals().error_fg_color
+                }));
             }
             path_row(ui, "Policy file", &mut self.policy_path, FilePick::Any);
             ui.add_space(6.0);
@@ -689,7 +676,10 @@ impl DesktopApp {
         section_card(ui, "Startup presets", |ui| {
             ui.label(
                 RichText::new(match presets::state_path() {
-                    Some(p) => format!("Stored at {} (reload secret is not saved here).", p.display()),
+                    Some(p) => format!(
+                        "Stored at {} (reload secret is not saved here).",
+                        p.display()
+                    ),
                     None => "Preset file location unavailable on this system.".into(),
                 })
                 .small()
@@ -712,10 +702,7 @@ impl DesktopApp {
                     .width((ui.available_width() - 100.0).max(160.0))
                     .selected_text(pick.as_deref().unwrap_or("(none)"))
                     .show_ui(ui, |ui| {
-                        if ui
-                            .selectable_label(pick.is_none(), "(none)")
-                            .clicked()
-                        {
+                        if ui.selectable_label(pick.is_none(), "(none)").clicked() {
                             pick = None;
                         }
                         for p in &self.preset_state.presets {
@@ -771,7 +758,8 @@ impl DesktopApp {
                     if let Some(i) = self.preset_selection {
                         if i < self.preset_state.presets.len() {
                             let removed = self.preset_state.presets.remove(i);
-                            if self.preset_state.startup_preset_name.as_ref() == Some(&removed.name) {
+                            if self.preset_state.startup_preset_name.as_ref() == Some(&removed.name)
+                            {
                                 self.preset_state.startup_preset_name = None;
                             }
                             self.preset_selection = None;
@@ -810,13 +798,11 @@ impl DesktopApp {
                 let is_err = self.preset_message.starts_with("Could not")
                     || self.preset_message.contains("Enter a")
                     || self.preset_message.contains("Select a");
-                ui.label(
-                    RichText::new(&self.preset_message).color(if is_err {
-                        ui.visuals().error_fg_color
-                    } else {
-                        theme::OK
-                    }),
-                );
+                ui.label(RichText::new(&self.preset_message).color(if is_err {
+                    ui.visuals().error_fg_color
+                } else {
+                    theme::OK
+                }));
             }
         });
 
@@ -916,7 +902,9 @@ impl DesktopApp {
                 RichText::new("check-config output").color(theme::MUTED),
                 |ui| {
                     if self.config_check_output.is_empty() {
-                        ui.label(RichText::new("Run check-config to see output.").color(theme::MUTED));
+                        ui.label(
+                            RichText::new("Run check-config to see output.").color(theme::MUTED),
+                        );
                     } else {
                         mono_block(ui, &self.config_check_output);
                     }
@@ -970,21 +958,21 @@ impl DesktopApp {
                 } else {
                     RichText::new(label)
                 })
-                    .fill(if sel {
+                .fill(if sel {
+                    theme::ACCENT
+                } else {
+                    ui.visuals().faint_bg_color
+                })
+                .stroke(Stroke::new(
+                    1.0,
+                    if sel {
                         theme::ACCENT
                     } else {
-                        ui.visuals().faint_bg_color
-                    })
-                    .stroke(Stroke::new(
-                        1.0,
-                        if sel {
-                            theme::ACCENT
-                        } else {
-                            ui.visuals().widgets.noninteractive.bg_stroke.color
-                        },
-                    ))
-                    .rounding(Rounding::same(6.0))
-                    .min_size(egui::vec2(120.0, 30.0));
+                        ui.visuals().widgets.noninteractive.bg_stroke.color
+                    },
+                ))
+                .rounding(Rounding::same(6.0))
+                .min_size(egui::vec2(120.0, 30.0));
                 if ui.add(b).clicked() {
                     self.policy_edit_mode = mode;
                 }
@@ -997,8 +985,9 @@ impl DesktopApp {
                 ui.horizontal(|ui| {
                     egui::ComboBox::from_id_salt("tpl")
                         .selected_text(
-                            TEMPLATE_LABELS
-                                [self.template_choice.min(TEMPLATE_LABELS.len().saturating_sub(1))],
+                            TEMPLATE_LABELS[self
+                                .template_choice
+                                .min(TEMPLATE_LABELS.len().saturating_sub(1))],
                         )
                         .show_ui(ui, |ui| {
                             for (i, label) in TEMPLATE_LABELS.iter().enumerate() {
@@ -1031,38 +1020,36 @@ impl DesktopApp {
                                 ui.visuals().widgets.noninteractive.bg_stroke.color,
                             ))
                             .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(format!("Rule {}", i + 1));
-                                if ui.small_button("Remove").clicked() {
-                                    remove = Some(i);
-                                }
-                                if ui.small_button("Duplicate").clicked() {
-                                    duplicate_at = Some(i);
-                                }
-                                if i > 0 && ui.small_button("Up").clicked() {
-                                    move_up = Some(i);
-                                }
-                                if i + 1 < rule_count && ui.small_button("Down").clicked() {
-                                    move_down = Some(i);
-                                }
-                            });
-                            ui.horizontal(|ui| {
-                                ui.label("Name");
-                                ui.text_edit_singleline(&mut d.name);
-                            });
-                            ui.horizontal(|ui| {
-                                ui.checkbox(&mut d.allow, "Allow (else deny)");
-                            });
-                            ui.label("Principals (comma or newline)");
-                            ui.add(
-                                egui::TextEdit::multiline(&mut d.principals).desired_rows(2),
-                            );
-                            ui.label("Actions");
-                            ui.add(egui::TextEdit::multiline(&mut d.actions).desired_rows(2));
-                            ui.label("Resources");
-                            ui.add(
-                                egui::TextEdit::multiline(&mut d.resources).desired_rows(2),
-                            );
+                                ui.horizontal(|ui| {
+                                    ui.label(format!("Rule {}", i + 1));
+                                    if ui.small_button("Remove").clicked() {
+                                        remove = Some(i);
+                                    }
+                                    if ui.small_button("Duplicate").clicked() {
+                                        duplicate_at = Some(i);
+                                    }
+                                    if i > 0 && ui.small_button("Up").clicked() {
+                                        move_up = Some(i);
+                                    }
+                                    if i + 1 < rule_count && ui.small_button("Down").clicked() {
+                                        move_down = Some(i);
+                                    }
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Name");
+                                    ui.text_edit_singleline(&mut d.name);
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.checkbox(&mut d.allow, "Allow (else deny)");
+                                });
+                                ui.label("Principals (comma or newline)");
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut d.principals).desired_rows(2),
+                                );
+                                ui.label("Actions");
+                                ui.add(egui::TextEdit::multiline(&mut d.actions).desired_rows(2));
+                                ui.label("Resources");
+                                ui.add(egui::TextEdit::multiline(&mut d.resources).desired_rows(2));
                             });
                     }
                     if let Some(i) = remove {
@@ -1121,8 +1108,7 @@ impl DesktopApp {
                             self.raw_policy = s;
                             self.policy_edit_mode = PolicyEditMode::Raw;
                             self.sync_raw_to_builder_if_possible();
-                            self.validation_note =
-                                format!("Imported {} (raw tab).", p.display());
+                            self.validation_note = format!("Imported {} (raw tab).", p.display());
                         }
                         Err(e) => self.validation_note = format!("Import failed: {e}"),
                     }
@@ -1143,10 +1129,7 @@ impl DesktopApp {
                 }
             }
             if ui.button("Diff vs last applied").clicked() {
-                let old = self
-                    .last_applied_policy_json
-                    .clone()
-                    .unwrap_or_default();
+                let old = self.last_applied_policy_json.clone().unwrap_or_default();
                 self.diff_text = match self.canonical_policy_json() {
                     Ok(cur) => policy_diff::unified_line_diff(&old, &cur),
                     Err(e) => e,
@@ -1169,11 +1152,12 @@ impl DesktopApp {
                     self.validation_note = "Set policy file path in Config.".into();
                 } else {
                     self.validation_note = match self.current_rules_for_apply() {
-                        Ok(rules) => match policy_ui::save_rules_json(std::path::Path::new(&p), &rules)
-                        {
-                            Ok(()) => format!("Saved {p}"),
-                            Err(e) => format!("Save failed: {e}"),
-                        },
+                        Ok(rules) => {
+                            match policy_ui::save_rules_json(std::path::Path::new(&p), &rules) {
+                                Ok(()) => format!("Saved {p}"),
+                                Err(e) => format!("Save failed: {e}"),
+                            }
+                        }
                         Err(e) => format!("Not saved: {e}"),
                     };
                 }
@@ -1211,7 +1195,9 @@ impl DesktopApp {
         }
         if !self.reload_note.is_empty() {
             ui.label(
-                RichText::new(&self.reload_note).color(theme::ACCENT).strong(),
+                RichText::new(&self.reload_note)
+                    .color(theme::ACCENT)
+                    .strong(),
             );
         }
 

@@ -28,11 +28,7 @@ impl ProcessSupervisor {
     }
 
     /// Start sidecar. Global CLI flags must come before `run` subcommand.
-    pub fn start(
-        &mut self,
-        binary: &str,
-        args_before_run: Vec<String>,
-    ) -> Result<(), String> {
+    pub fn start(&mut self, binary: &str, args_before_run: Vec<String>) -> Result<(), String> {
         self.stop();
 
         let mut cmd = Command::new(binary);

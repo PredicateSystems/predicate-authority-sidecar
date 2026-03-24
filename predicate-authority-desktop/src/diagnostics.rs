@@ -10,8 +10,7 @@ pub fn write_diagnostics_zip<W: Write + std::io::Seek>(
     meta: &str,
 ) -> Result<(), String> {
     let mut zip = ZipWriter::new(writer);
-    let opts = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
+    let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     zip.start_file("README.txt", opts)
         .map_err(|e| e.to_string())?;
     zip.write_all(

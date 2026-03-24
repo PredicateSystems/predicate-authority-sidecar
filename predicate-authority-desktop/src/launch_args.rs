@@ -99,15 +99,10 @@ mod tests {
         .unwrap();
         assert_eq!(
             args,
-            vec![
-                "--host",
-                "127.0.0.1",
-                "--port",
-                "8787",
-            ]
-            .into_iter()
-            .map(String::from)
-            .collect::<Vec<_>>()
+            vec!["--host", "127.0.0.1", "--port", "8787",]
+                .into_iter()
+                .map(String::from)
+                .collect::<Vec<_>>()
         );
     }
 

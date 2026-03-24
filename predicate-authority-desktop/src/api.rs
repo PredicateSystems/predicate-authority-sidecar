@@ -72,10 +72,7 @@ pub fn policy_reload(
     let mut req = client.post(url).json(&body);
     if let Some(s) = bearer_secret {
         if !s.trim().is_empty() {
-            req = req.header(
-                "Authorization",
-                format!("Bearer {}", s.trim()),
-            );
+            req = req.header("Authorization", format!("Bearer {}", s.trim()));
         }
     }
     let r = req.send().map_err(|e| e.to_string())?;

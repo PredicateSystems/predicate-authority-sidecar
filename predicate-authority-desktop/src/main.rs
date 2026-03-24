@@ -3,7 +3,6 @@
 mod api;
 mod app;
 mod diagnostics;
-mod theme;
 mod keychain;
 mod launch_args;
 mod policy_diff;
@@ -11,6 +10,7 @@ mod policy_ui;
 mod presets;
 mod process;
 mod sidecar_probe;
+mod theme;
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {

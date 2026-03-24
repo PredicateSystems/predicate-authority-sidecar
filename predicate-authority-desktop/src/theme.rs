@@ -53,10 +53,23 @@ pub fn apply(ctx: &egui::Context) {
         s.spacing.indent = 16.0;
         s.spacing.window_margin = Margin::same(12.0);
 
-        s.text_styles.insert(TextStyle::Small, FontId::new(11.0, FontFamily::Proportional));
-        s.text_styles.insert(TextStyle::Body, FontId::new(14.0, FontFamily::Proportional));
-        s.text_styles.insert(TextStyle::Button, FontId::new(14.0, FontFamily::Proportional));
-        s.text_styles.insert(TextStyle::Heading, FontId::new(22.0, FontFamily::Proportional));
-        s.text_styles.insert(TextStyle::Monospace, FontId::new(13.0, FontFamily::Monospace));
+        s.text_styles.insert(
+            TextStyle::Small,
+            FontId::new(11.0, FontFamily::Proportional),
+        );
+        s.text_styles
+            .insert(TextStyle::Body, FontId::new(14.0, FontFamily::Proportional));
+        s.text_styles.insert(
+            TextStyle::Button,
+            FontId::new(14.0, FontFamily::Proportional),
+        );
+        s.text_styles.insert(
+            TextStyle::Heading,
+            FontId::new(22.0, FontFamily::Proportional),
+        );
+        s.text_styles.insert(
+            TextStyle::Monospace,
+            FontId::new(13.0, FontFamily::Monospace),
+        );
     });
 }
